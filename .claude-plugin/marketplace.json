@@ -1,0 +1,16 @@
+{
+  "name": "fabrio-dev",
+  "owner": {
+    "name": "Fabrio",
+    "url": "https://fabrio.dev"
+  },
+  "plugins": [
+    {
+      "name": "fabrio",
+      "source": "./plugins/fabrio",
+      "description": "Fabrio workflow skills — run feature-request, ops-heartbeat, merge-task, and plan skills against your Fabrio account. Bundles the Fabrio MCP connection.",
+      "category": "development",
+      "homepage": "https://fabrio.dev"
+    }
+  ]
+}

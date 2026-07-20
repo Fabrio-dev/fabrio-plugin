@@ -1,0 +1,31 @@
+{
+  "name": "fabrio",
+  "version": "0.1.0",
+  "description": "Fabrio workflow skills (feature-request, ops-heartbeat, merge-task, generate-plan, revise-plan, consolidate-learnings) plus the bundled Fabrio MCP connection. Installing this connects Claude Code to your Fabrio account and adds the /fabrio:* commands.",
+  "author": { "name": "Fabrio", "url": "https://fabrio.dev" },
+  "homepage": "https://fabrio.dev",
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "Fabrio API Key",
+      "description": "Create one in Fabrio → Settings → API keys (starts with fab_live_). Scoped to a single account.",
+      "sensitive": true,
+      "required": true
+    },
+    "mcp_url": {
+      "type": "string",
+      "title": "Fabrio MCP URL",
+      "description": "The Fabrio MCP endpoint. Leave as the default unless self-hosting or developing locally (e.g. http://localhost:3000/api/mcp).",
+      "default": "https://fabrio.dev/api/mcp"
+    }
+  },
+  "mcpServers": {
+    "fabrio": {
+      "type": "http",
+      "url": "${user_config.mcp_url}",
+      "headers": {
+        "Authorization": "Bearer ${user_config.api_key}"
+      }
+    }
+  }
+}

@@ -8,13 +8,19 @@ One cycle of the self-improving loop. Both gates stay intact: **PRs always wait 
 
 **Invocation:** `/ops-heartbeat` (daily) or `/ops-heartbeat --weekly` (also run the weekly steps now). Trigger-agnostic: by hand, via `/loop`, or from cron/launchd/a cloud routine.
 
-All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials or curl. The server scopes everything to the account whose API key is connected; `scripts/use-account.ps1 <name>` selects which account. Headless `claude -p` children spawned in Step 2 run from the repo root and inherit the same local-scope MCP connection automatically.
+All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials or curl. The server scopes everything to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys** (or the repo's `scripts/use-account.ps1 <name>` helper if you have Fabrio checked out). Headless `claude -p` children spawned in Step 2 run from the repo root and inherit the same local-scope MCP connection automatically.
 
 ---
 
 ## Step 0 — Setup + Run-Lock
 
-If the `mcp__fabrio__*` tools aren't available, stop and tell the user to connect an account (`scripts/use-account.ps1 <name>`).
+If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabrio` MCP server isn't connected, with these steps:
+
+> Create a key in **Fabrio → Settings → API keys**, then run the **Connect command** shown there:
+> ```
+> claude mcp add --transport http -s local fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
+> ```
+> Restart Claude Code and re-invoke. (If you have the Fabrio repo checked out, `scripts/use-account.ps1 <name>` automates this and is also how you switch accounts.)
 
 **Acquire the soft run-lock** — call `open_ops_run { force_weekly: <true if --weekly> }`.
 - If it returns `{ locked: true }`, stop: `⏸  An ops run is already in progress — skipping.`

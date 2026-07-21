@@ -23,7 +23,12 @@ Run first; if any check fails, stop:
 gh auth status                # GitHub CLI must be authed
 ```
 - If `gh` isn't authed, stop and tell the user to `gh auth login`.
-- If the `mcp__fabrio__*` tools aren't available, stop and tell the user to connect an account: `scripts/use-account.ps1 <name>` (Windows) or `scripts/use-account.sh <name>`. This is also how they switch which account you operate on.
+- If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabrio` MCP server isn't connected:
+  > Create a key in **Fabrio → Settings → API keys**, then run the **Connect command** shown there:
+  > ```
+  > claude mcp add --transport http -s local fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
+  > ```
+  > Restart Claude Code and re-invoke. (If you have the Fabrio repo checked out, `scripts/use-account.ps1 <name>` / `use-account.sh <name>` automates this and is also how you switch accounts.)
 
 **Source root** — the site repos live at `{source_root}/{site.relative_path}` (`get_site` / `get_task` return `relative_path`). Read `source_root` from the `FABRIO_SOURCE_ROOT` environment variable. **If it's unset**, tell the user it needs to be set and give them these instructions, then ask for the path to use for this run (so the run isn't blocked):
 

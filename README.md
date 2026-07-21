@@ -37,7 +37,29 @@ Each account has its own API key. To point Claude at a different account, re-run
 ## Prerequisites
 
 - A Fabrio account + an API key (Settings → API keys; starts with `fab_live_`).
-- `gh` (GitHub CLI) authenticated and your site repos checked out — the workflow commands run `git`/`gh`/`npm` in those repos. Set `FABRIO_SOURCE_ROOT` to the folder that contains them.
+- `gh` (GitHub CLI) authenticated and your site repos checked out — the workflow commands run `git`/`gh`/`npm` in those repos.
+
+### Tell the commands where your repos live (`FABRIO_SOURCE_ROOT`)
+
+The commands build each repo's path as `{FABRIO_SOURCE_ROOT}/{site.relative_path}`, so
+they need to know the local folder that holds your site checkouts. Set it in **one** of
+these ways — Claude Code reads it from its own environment, and it does **not** read
+Fabrio's `.env.local` (that file only configures the app itself):
+
+- **Claude Code `settings.json` (recommended — works from any folder).** Add to
+  `~/.claude/settings.json`:
+  ```json
+  { "env": { "FABRIO_SOURCE_ROOT": "C:\\Users\\you\\Source" } }
+  ```
+  (macOS/Linux: `"/Users/you/Source"`.) This injects the variable into every Claude Code
+  session, so the commands find your repos no matter which directory you run them from.
+
+- **A real OS/shell environment variable** — a Windows user env var, or
+  `export FABRIO_SOURCE_ROOT=/Users/you/Source` in your shell profile — set **before**
+  you launch `claude`.
+
+If it's unset, the command just asks you for the path once per run — nothing breaks, it's
+only less hands-off.
 
 ## Security
 

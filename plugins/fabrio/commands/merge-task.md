@@ -28,7 +28,15 @@ Extract the task number. If none: `Error: Task number required. Usage: /merge-ta
 
 ## Step 2 — Fetch Task
 
-Call `get_task { task_number, include_history: true }`. If null: `Error: Task #{task_number} not found.` Store as `task`. Full site path = `{source_root}/{task.site.relative_path}` where `source_root` comes from the `FABRIO_SOURCE_ROOT` env var (ask the user if unset).
+Call `get_task { task_number, include_history: true }`. If null: `Error: Task #{task_number} not found.` Store as `task`. Full site path = `{source_root}/{task.site.relative_path}` where `source_root` comes from the `FABRIO_SOURCE_ROOT` env var.
+
+**If `FABRIO_SOURCE_ROOT` is unset**, tell the user it needs to be set (Claude Code reads it from its own environment, not Fabrio's `.env.local`) and give the fix, then ask for the path to use for this run:
+
+> `FABRIO_SOURCE_ROOT` isn't set — set it once so I can find your repos:
+> - **Recommended** — add to `~/.claude/settings.json` and restart Claude Code: `{ "env": { "FABRIO_SOURCE_ROOT": "C:\\Users\\you\\Source" } }` (macOS/Linux: `"/Users/you/Source"`).
+> - **Or** set a real OS/shell env var before launching `claude`.
+>
+> For now, what's the absolute path to the folder that holds your site repos?
 
 ---
 

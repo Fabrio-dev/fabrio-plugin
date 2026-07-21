@@ -8,7 +8,7 @@ One cycle of the self-improving loop. Both gates stay intact: **PRs always wait 
 
 **Invocation:** `/ops-heartbeat` (daily) or `/ops-heartbeat --weekly` (also run the weekly steps now). Trigger-agnostic: by hand, via `/loop`, or from cron/launchd/a cloud routine.
 
-All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials or curl. The server scopes everything to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys** (or the repo's `scripts/use-account.ps1 <name>` helper if you have Fabrio checked out). Headless `claude -p` children spawned in Step 2 run from the repo root and inherit the same local-scope MCP connection automatically.
+All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials or curl. The server scopes everything to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys**. Headless `claude -p` children spawned in Step 2 run from that same directory and inherit the local-scope MCP connection automatically.
 
 ---
 
@@ -20,7 +20,7 @@ If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabr
 > ```
 > claude mcp add --transport http -s local fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
 > ```
-> Restart Claude Code and re-invoke. (If you have the Fabrio repo checked out, `scripts/use-account.ps1 <name>` automates this and is also how you switch accounts.)
+> Restart Claude Code and re-invoke.
 
 **Acquire the soft run-lock** — call `open_ops_run { force_weekly: <true if --weekly> }`.
 - If it returns `{ locked: true }`, stop: `⏸  An ops run is already in progress — skipping.`
@@ -56,7 +56,7 @@ Call `list_tasks { type: "feature_request", statuses: ["ready", "changes_needed"
 
 **b. Resolve the model** for T's tier (default `standard` when `difficulty` is null) from the `get_model_tiers` result.
 
-**c. Dispatch** — run T as its own headless session on the resolved model. Run from the **repo root** (so `.claude/commands` resolves and the local-scope MCP server is inherited); headless `-p` mode can't prompt, so tools must be allow-listed (see Permissions note):
+**c. Dispatch** — run T as its own headless session on the resolved model. Run it from the **same directory where the `fabrio` MCP server was connected** — `claude mcp add -s local` ties the connection to that directory, so the headless child inherits it (the `/feature-request` command itself is always available once the plugin is installed). Headless `-p` mode can't prompt, so tools must be allow-listed (see Permissions note):
 ```bash
 claude -p "/feature-request {T.task_number}" --model "$MODEL" --permission-mode acceptEdits
 ```

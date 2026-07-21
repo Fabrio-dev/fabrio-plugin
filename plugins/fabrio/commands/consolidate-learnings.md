@@ -12,7 +12,7 @@ Keep the AI memory high-signal: merge duplicates, promote proven learnings into 
 
 ## Prerequisites
 
-All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — **no Supabase CLI and no `SUPABASE_DB_URL` anymore.** The server scopes to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys** (or the repo's `scripts/use-account.ps1 <name>` helper if you have Fabrio checked out). If the tools aren't available, stop and tell the user: create a key in **Settings → API keys** and run its **Connect command** (`claude mcp add --transport http -s local fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"`), then restart Claude Code and re-invoke.
+All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — **no Supabase CLI and no `SUPABASE_DB_URL` anymore.** The server scopes to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys**. If the tools aren't available, stop and tell the user: create a key in **Settings → API keys** and run its **Connect command** (`claude mcp add --transport http -s local fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"`), then restart Claude Code and re-invoke.
 
 ---
 

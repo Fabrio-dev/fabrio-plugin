@@ -8,7 +8,7 @@ Merge an approved PR into the repo's base branch and mark the task as done.
 
 **Invocation:** `/merge-task <task_number>`
 
-All Fabrio data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials. The server scopes to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys** (or the repo's `scripts/use-account.ps1 <name>` helper if you have Fabrio checked out).
+All Fabrio data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials. The server scopes to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys**.
 
 ---
 
@@ -22,7 +22,7 @@ If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabr
 > ```
 > claude mcp add --transport http -s local fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
 > ```
-> Restart Claude Code and re-invoke. (If you have the Fabrio repo checked out, `scripts/use-account.ps1 <name>` automates this.)
+> Restart Claude Code and re-invoke.
 
 ---
 

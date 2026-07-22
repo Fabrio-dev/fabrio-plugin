@@ -20,7 +20,7 @@ If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabr
 
 > Create a key in **Fabrio → Settings → API keys**, then run the **Connect command** shown there:
 > ```
-> claude mcp add --transport http -s local fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
+> claude mcp add --transport http -s user fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
 > ```
 > Restart Claude Code and re-invoke.
 

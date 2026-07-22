@@ -19,10 +19,11 @@ claude plugin install fabrio@fabrio-dev
 In Fabrio, go to **Settings → API keys → Create key**, then copy the **Connect command** shown there and run it — it's a one-liner with your key already inlined:
 
 ```
-claude mcp add --transport http -s local fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
+claude mcp add --transport http -s user fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
 ```
 
-Restart Claude Code, then verify:
+(`-s user` registers it at user scope, so it works from **every** folder you open Claude
+Code from — not just the one you ran this in.) Restart Claude Code, then verify:
 
 ```
 claude mcp list        # → fabrio: connected

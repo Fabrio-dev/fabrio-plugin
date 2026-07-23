@@ -6,7 +6,7 @@ description: "Proposes an updated version of a living plan based on completed wo
 
 Propose an evolved version of a living plan. This is the core of the "living plans" loop: the plan improves over time as work ships and learnings accrue. **This skill only proposes — it never mutates the live plan.** A human reviews the diff and accepts or rejects it at `/plans/{id}`.
 
-**Invocation:** `/revise-plan <plan_number>` — the short number shown as `#N` in Fabrio (not the UUID).
+**Invocation:** `/fabrio:revise-plan <plan_number>` — the short number shown as `#N` in Fabrio (not the UUID).
 
 ---
 
@@ -18,7 +18,7 @@ All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) 
 
 ## Step 1 — Fetch the Plan + Current Items
 
-Call `get_plan { plan_number, include_items: true }`. Store as `plan`; capture `plan.id` (the UUID). The plan is a cross-department **objective** (`plan.title`); each item carries its own `department`. It also returns `latest_accepted_revision` (used in Step 2). If null, tell the user the plan number wasn't found. If the plan has no items yet, stop and tell the user to run `/generate-plan {plan_number}` first — there's nothing to revise.
+Call `get_plan { plan_number, include_items: true }`. Store as `plan`; capture `plan.id` (the UUID). The plan is a cross-department **objective** (`plan.title`); each item carries its own `department`. It also returns `latest_accepted_revision` (used in Step 2). If null, tell the user the plan number wasn't found. If the plan has no items yet, stop and tell the user to run `/fabrio:generate-plan {plan_number}` first — there's nothing to revise.
 
 ---
 
@@ -47,7 +47,9 @@ Design an updated plan (goals + full item list) across all the departments the o
 - **Add** new initiatives informed by what shipped, the goals, and the learnings — including in departments not yet represented if the objective now needs them.
 - **Reprioritize** based on cross-department bottlenecks, what struggled, or what learnings flag as high-value.
 
-The item list is the COMPLETE proposed set (it replaces the current items if accepted), each with `department`, `title`, `description`, `category`, `frequency`, `priority`, `difficulty`, `sort_order`, optional `depends_on` (the `sort_order` of a prerequisite item; auto-queue skips a dependent item until its prerequisite is `done`), and optional `site_id` (a sibling site's id when the item belongs to a different codebase than the plan's site — carry existing overrides forward). Write a concise `change_summary` (what the human sees first).
+The item list is the COMPLETE proposed set (it replaces the current items if accepted), each with `department`, `title`, `description`, `category`, `frequency`, `priority`, `difficulty`, `sort_order`, optional `depends_on` (the `sort_order` of a prerequisite item; auto-queue skips a dependent item until its prerequisite is `done`), optional `site_id` (a sibling site's id when the item belongs to a different codebase than the plan's site — carry existing overrides forward), and optional `kind`. Write a concise `change_summary` (what the human sees first).
+
+**Generator jobs:** carry an existing generator item forward with its `kind: "generator"` and its `description` intact (its saved `job_plan` persists on the live item — a proposal doesn't touch it). Only propose a **new** generator when the objective genuinely needs recurring, source-driven work that files a ticket per issue (e.g. "keep beta bugs low"); set `kind: "generator"` and put a clear "how we gather work" account in the item's `description`, and note that the human runs `/fabrio:plan-job` on it after accepting to author the job plan.
 
 `difficulty` is the effort tier (`light`/`standard`/`heavy`) that decides which model runs the item's tasks. **Carry each existing item's current difficulty forward** unless the revision genuinely re-scopes it; assign new items by the rubric (light = single-file/copy/config, no schema; standard = typical multi-file feature, default; heavy = cross-cutting/architectural/ambiguous/security-sensitive).
 

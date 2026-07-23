@@ -6,7 +6,7 @@ description: "Generates the initial cross-department initiatives for an empty ob
 
 Fill an empty objective plan with an initial set of initiatives spanning whatever departments the objective requires (content, design, development, marketing).
 
-**Invocation:** `/generate-plan <plan_number>` — the short number shown as `#N` in Fabrio (not the UUID).
+**Invocation:** `/fabrio:generate-plan <plan_number>` — the short number shown as `#N` in Fabrio (not the UUID).
 
 ---
 
@@ -18,7 +18,7 @@ All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) 
 
 ## Step 1 — Fetch the Plan
 
-Call `get_plan { plan_number, include_items: true, include_attachments: true }`. Store as `plan`; capture `plan.id` (the UUID) — the item-writing tools use it. The plan is a cross-department **objective** (`plan.title`, e.g. "Improve SEO") — no department on the plan itself; you assign a department to each item. If null, tell the user the plan number wasn't found. If the plan already has items, warn that `/generate-plan` replaces them and suggest `/revise-plan` for incremental updates — proceed only on a full regeneration.
+Call `get_plan { plan_number, include_items: true, include_attachments: true }`. Store as `plan`; capture `plan.id` (the UUID) — the item-writing tools use it. The plan is a cross-department **objective** (`plan.title`, e.g. "Improve SEO") — no department on the plan itself; you assign a department to each item. If null, tell the user the plan number wasn't found. If the plan already has items, warn that `/fabrio:generate-plan` replaces them and suggest `/fabrio:revise-plan` for incremental updates — proceed only on a full regeneration.
 
 ---
 
@@ -57,6 +57,7 @@ Each initiative:
   - `standard` — a typical feature: a few files, existing patterns, small additive migration at most. **Default.**
   - `heavy` — cross-cutting/architectural; new subsystems; schema redesign; ambiguous; security-sensitive.
 - `sort_order` — integer, ascending
+- `kind` — **optional**: `execution` (default) or `generator`. Use `generator` **only** for a recurring initiative that gathers work from a source and files a ticket per issue (e.g. "weekly bug triage → file a ticket per bug", "review churned users → outreach tasks") rather than being a single unit of work. A generator must be recurring (`frequency != one_time`). For a generator, make the **`description`** a clear, natural-language account of how the job gathers work — the source (API, ticket system, MCP, analytics) and how to pick items (e.g. "Each week, pull open bugs from the team's tracker, take the top 5 by severity, and file a ticket for each"). `/fabrio:plan-job` later compiles that description into the saved job plan (and may ask the human a clarifying question first).
 - `depends_on` — **optional** integer: the `sort_order` of a prerequisite item. Sequences cross-department work; auto-queue skips a dependent item until its prerequisite is `done`. Omit for independent items.
 - `site_id` — **optional**: a sibling site's `id` (from Step 2's `list_sites`) when this initiative belongs to a **different** codebase than the plan's site — e.g. a marketing item for the public site while the plan is on the app. Omit to inherit the plan's site (the common case). The queued task is created against this site's repo, so cross-site sequencing works (e.g. a public-site page that `depends_on` an app feature).
 
@@ -98,5 +99,7 @@ Record 0–3 generalizable learnings (same rules as feature-request Step 11.5: r
 • [development] {title} — {frequency}
 ...
 
-Review and queue tasks at /plans/{plan.id}. To evolve the plan later, run /revise-plan {plan_number}.
+Review and queue tasks at /plans/{plan.id}. To evolve the plan later, run /fabrio:revise-plan {plan_number}.
 ```
+
+If any initiative was created as a **generator** (`kind: "generator"`), tell the user it needs a job plan before it can run: `/fabrio:plan-job {item_number}` (the job's `#N`, shown on the job in the plan UI).

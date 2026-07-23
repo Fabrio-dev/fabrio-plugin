@@ -6,8 +6,8 @@ description: "Implements feature request tasks end-to-end — single task or all
 
 Implement `type='feature_request'` tasks from the Fabrio task system end-to-end.
 
-- `/feature-request 42` — implement one task by number.
-- `/feature-request` — implement ALL available tasks (batch).
+- `/fabrio:feature-request 42` — implement one task by number.
+- `/fabrio:feature-request` — implement ALL available tasks (batch).
 
 **Resume:** re-running a task detects existing work (saved plan, existing PR) and picks up where it left off instead of starting over.
 
@@ -57,7 +57,7 @@ Task history: use `log_task_history` for semantic milestones. Routine field edit
 
 **Batch mode** (no argument): fetch all workable code tasks with `list_tasks` — `{ type: "feature_request", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }`. Only `feature_request` is implemented here; `marketing`/content tasks are tracked but not auto-implemented. If none, output "No tasks are currently available to work on." and stop. Otherwise list them, then run **Steps 2–12 for each in order**, returning here after each.
 
-> **Model routing note:** batch mode runs every task in the current session's model — it does not switch per task. Tier-aware routing is `/ops-heartbeat`'s job (it dispatches each task as its own headless `/feature-request {n}` on the resolved model). Step 5.5 still classifies unset tiers so those runs route correctly.
+> **Model routing note:** batch mode runs every task in the current session's model — it does not switch per task. Tier-aware routing is `/fabrio:ops-heartbeat`'s job (it dispatches each task as its own headless `/fabrio:feature-request {n}` on the resolved model). Step 5.5 still classifies unset tiers so those runs route correctly.
 
 Before starting each task, reset git to a clean base inside that task's repo:
 ```bash
@@ -202,7 +202,7 @@ git fetch origin && git checkout "$BR" && git pull origin "$BR"
 
 ## Step 8 — Implement
 
-> Plan generation/revision live in `/generate-plan` and `/revise-plan`, not here — this skill only writes code (enforced by the Step 3 type guard).
+> Plan generation/revision live in `/fabrio:generate-plan` and `/fabrio:revise-plan`, not here — this skill only writes code (enforced by the Step 3 type guard).
 
 Follow the plan. Read adjacent files and match existing patterns exactly. For DB changes: new numbered migration in `supabase/migrations/` + update `supabase/schema.sql`. Type-check with `npx tsc --noEmit` while developing; commit logical units (`npm run build` is the Step 9 gate).
 
@@ -243,7 +243,7 @@ gh pr create --base "$BASE_BRANCH" --title "Task #{task_number}: {task.title}" -
 {how to verify}
 
 ---
-🤖 Implemented by AI via Fabrio `/feature-request`
+🤖 Implemented by AI via Fabrio `/fabrio:feature-request`
 PRBODY
 )"
 gh pr view --json url,number          # capture pr_url, pr_number
@@ -288,7 +288,7 @@ git push origin {branch_name}        # PR already exists; pr_url/pr_number uncha
 ✅ Task #{n} complete.
   Title: {title}   Site: {site}   Branch: feature/task-{n}-{slug}
   PR: {pr_url}     Status: under_review   Learnings: {N} recorded, {M} reinforced
-Awaiting human review — once approved, /merge-task handles the rest.
+Awaiting human review — once approved, /fabrio:merge-task handles the rest.
 ```
 **Batch:** a one-liner per task (`✅ #{n} — {title} → {pr_url}` / `⏭  #{n} — {title} → skipped ({reason})`), then `Batch complete. {N} processed.` with the list, noting ✅ tasks are under review and skipped ones resume on re-run once questions are answered.
 

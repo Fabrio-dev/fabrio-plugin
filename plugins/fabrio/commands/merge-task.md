@@ -6,7 +6,7 @@ description: "Merges an approved PR into the repo's base branch and marks the ta
 
 Merge an approved PR into the repo's base branch and mark the task as done.
 
-**Invocation:** `/merge-task <task_number>`
+**Invocation:** `/fabrio:merge-task <task_number>`
 
 All Fabrio data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials. The server scopes to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys**.
 
@@ -28,7 +28,7 @@ If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabr
 
 ## Step 1 — Validate Invocation
 
-Extract the task number. If none: `Error: Task number required. Usage: /merge-task <task_number>`.
+Extract the task number. If none: `Error: Task number required. Usage: /fabrio:merge-task <task_number>`.
 
 ---
 

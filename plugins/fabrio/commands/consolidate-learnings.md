@@ -6,7 +6,7 @@ description: "Merges duplicate learnings, promotes recurring ones into site ai_c
 
 Keep the AI memory high-signal: merge duplicates, promote proven learnings into durable context, prune stale ones.
 
-**Invocation:** `/consolidate-learnings`
+**Invocation:** `/fabrio:consolidate-learnings`
 
 ---
 

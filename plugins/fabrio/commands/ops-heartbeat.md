@@ -82,7 +82,7 @@ Re-running a partially-done task is safe — Step 3.5 of `/fabrio:feature-reques
 
 ## Step 2C — Implement via Chains (only when `--chain`)
 
-Runs **instead of** 2a–2d. Here `/fabrio:feature-chain` owns the whole implementation pass: it groups the workable tasks into dependency chains, builds each chain on one shared branch, holds a chain (no PR) if a task needs input, and opens one PR per chain. So ops-heartbeat does **not** iterate tasks or run the per-task dependency gate here — `feature-chain` handles ordering and cascades internally. It also **routes models per task itself** (Step 2.5 of that skill): within a mixed-tier chain it dispatches each task on its own tier's model. So you don't size the model here — let `feature-chain` orchestrate on a cheap model and fan out per task.
+Runs **instead of** 2a–2d. Here `/fabrio:feature-chain` owns the whole implementation pass: it groups the workable tasks into dependency chains, builds each chain on one shared branch, holds a chain (no PR) if a task needs input, and opens one PR per chain. So ops-heartbeat does **not** iterate tasks or run the per-task dependency gate here — `feature-chain` handles ordering and cascades internally. It also **routes models per task itself** (Step 2.5 of that skill): whenever headless dispatch is available it dispatches each task on its own tier's model, regardless of the orchestrator's model. So you don't size the model here — let `feature-chain` orchestrate on a cheap model and fan out per task.
 
 From the Step 2 `list_tasks` result, take the distinct `site_id`s that have workable tasks. For **each such site**, in order:
 

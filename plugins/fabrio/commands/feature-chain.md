@@ -16,7 +16,7 @@ Implement **dependent** `type='feature_request'` tasks together: run them one-at
 
 **Resume:** re-running detects work already committed on the shared branch (per-task `Task #{n}:` commit markers) and picks up from the first task that isn't done yet.
 
-**Model routing (automatic):** a session can't switch models mid-run, so when a chain's tasks span **different difficulty tiers**, each task is implemented in its own headless child on that tier's mapped model (a `light` task on the cheap model, a `heavy` one on the capable model), all on the same shared branch. When every task is the same tier (or it's a one-task chain, or headless dispatch isn't available), the whole chain just runs inline in the current session. See Step 2.5.
+**Model routing (automatic):** a session can't switch models mid-run, so whenever headless dispatch is available, **every** task is implemented in its own headless child on its tier's mapped model (a `light` task on the cheap model, a `heavy` one on the capable model), all on the same shared branch — regardless of what model this session is running. Only when headless dispatch isn't available does the chain fall back to running inline on the current session's model (with a warning that tasks aren't routed). See Step 2.5.
 
 ---
 
@@ -116,22 +116,30 @@ If there's newer feedback, read it (it applies to whichever task(s) it names), r
 
 ---
 
-## Step 2.5 — Choose Execution Mode (automatic model routing)
+## Step 2.5 — Choose Execution Mode (MANDATORY — decide before touching any task)
 
-A running session can't change models mid-conversation, so a task only runs on its mapped model if it runs in its **own process**. Decide the mode for this chain:
+**Do this before you fetch, plan, claim, implement, or commit a single task.** Deciding the mode is a hard gate: you may not enter Step 3 or Step 3R until you have completed and printed this decision. Implementing even one task first (as "inline") and then deciding is a **defect** — it silently strands the whole chain on the wrong model.
 
-1. **Ensure every task has a `difficulty`** — you need the tier to pick a model. For any task whose `difficulty` is null, classify it now (`light` / `standard` / `heavy` — rubric in 3f) and persist with `update_task`.
+A running session can't change models mid-conversation, so each task only lands on its mapped model if it runs in its **own process**. The current session's model is **irrelevant** to which model a task should use — do not assume "this session is already the right model."
+
+1. **Ensure every task has a `difficulty`** (you need the tier to pick a model). Classify any null ones now (`light` / `standard` / `heavy` — rubric in 3f) and persist with `update_task`.
 2. **Load the tier → model map:** `get_model_tiers`.
-3. **Routed mode** — use it when the chain's tasks span **more than one tier** AND headless dispatch is available (`command -v claude` succeeds and `mcp__fabrio` is allow-listed for `-p` runs). Each task runs on its own tier's model → **Step 3R**.
-4. **Inline mode** — use it when all tasks are the **same tier**, it's a **one-task chain**, or headless dispatch isn't available. The whole chain runs in the current session on its current model → **Step 3**.
+3. **Is headless dispatch available?** Yes when `command -v claude` succeeds AND the `fabrio` MCP tools work from a `-p` child (true for unattended/allow-listed runs, and for interactive runs where you can approve the child's prompts).
 
-Print the choice. For routed mode, print the per-task model plan, e.g. `Routing: #12→haiku (light) · #13→opus (heavy) · #14→haiku (light)`.
+Then pick the mode:
+
+- **Routed mode — the default whenever headless dispatch is available.** Go to **Step 3R**; **every** task is dispatched to a headless child on its own tier's model. Use routed mode **even if all tasks share one tier**, because the session's model is not guaranteed to equal that tier's model (a chain of `heavy` tasks in a Haiku session must still route to the heavy model). This is the only mode that guarantees each task runs on its mapped model.
+- **Inline fallback — only when headless dispatch is NOT available.** Go to **Step 3**; the whole chain runs in this session on its current model. Print a warning: `⚠️  Headless dispatch unavailable — running the whole chain inline on {current model}; tasks are NOT routed to their mapped models.`
+
+Print the decision. For routed mode, print the per-task plan, e.g. `Routing: #64→opus (heavy) · #66→sonnet (standard) · #67→opus (heavy) …`.
+
+> **Hard rule for routed mode:** you (the orchestrator) do **not** implement or commit task code yourself — your only per-task action is the `claude -p … --step` dispatch in Step 3R. If you're about to edit a file or run `git commit` for a task in routed mode, **STOP**: dispatch instead. Falling back to inline because dispatch "seems easier" is a defect, not a shortcut. The only route from routed mode into inline work is the explicit per-task dispatch **fallback** in Step 3R (child errored without claiming/committing).
 
 ---
 
-## Step 3 — Implement Each Task in the Chain — Inline mode (in order)
+## Step 3 — Implement Each Task in the Chain — Inline fallback (in order)
 
-Used when Step 2.5 chose **inline mode**. For each task **T** in the chain, in order. This mirrors `/fabrio:feature-request` Steps 2–9 **minus** its per-task branch creation and per-task PR — you are already on the shared branch and stay on it. (In **routed mode**, the same per-task work is done by headless children instead — see Step 3R — and you skip this Step 3.)
+**Enter this step only if Step 2.5 selected the inline fallback** (headless dispatch unavailable). If Step 2.5 selected routed mode, go to **Step 3R** and do not implement here. For each task **T** in the chain, in order. This mirrors `/fabrio:feature-request` Steps 2–9 **minus** its per-task branch creation and per-task PR — you are already on the shared branch and stay on it.
 
 ### 3a — Already done on this branch? (resume marker)
 ```bash
@@ -185,7 +193,11 @@ When every task in the chain has been implemented and the final build is green, 
 
 ## Step 3R — Routed mode (per-task model dispatch)
 
-Used when Step 2.5 chose **routed mode**. You are already on the shared chain branch (Step 2). Implement the chain by dispatching one headless child per task, each on its own tier's model, **sequentially** (the next task builds on the previous one's commits, which are on disk once the child exits). For each task **T** in order:
+Used when Step 2.5 chose **routed mode**. You are already on the shared chain branch (Step 2). Implement the chain by dispatching one headless child per task, each on its own tier's model, **sequentially** (the next task builds on the previous one's commits, which are on disk once the child exits).
+
+> **You do not write code here.** In routed mode the orchestrator's job is only: grep for the resume marker, resolve the model, dispatch, read the outcome, repeat. You never open files, edit, or `git commit` a task yourself. If you catch yourself implementing a task in-session, you've dropped out of routed mode — stop and dispatch it. The single exception is the explicit error **fallback** in 4·bullet 3 below.
+
+For each task **T** in order:
 
 1. **Already done?** `git log {branch} --grep "^Task #{T.task_number}:" -1` — if a commit exists, T is on the branch already → skip to the next task.
 2. **Resolve T's model** from the `get_model_tiers` map using `T.difficulty` (default `standard`).

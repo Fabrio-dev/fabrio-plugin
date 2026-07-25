@@ -6,7 +6,7 @@ description: "Runs one cycle of the autonomous ops loop — queues due recurring
 
 One cycle of the self-improving loop. Both gates stay intact: **PRs always wait for your review, and nothing merges** — this skill never calls `/fabrio:merge-task`.
 
-**Invocation:** `/fabrio:ops-heartbeat` (daily) or `/fabrio:ops-heartbeat --weekly` (also run the weekly steps now). Trigger-agnostic: by hand, via `/loop`, or from cron/launchd/a cloud routine.
+**Invocation:** `/fabrio:ops-heartbeat` (daily) or `/fabrio:ops-heartbeat --weekly` (also run the weekly steps now). Add `--chain` to have Step 2 implement ready code tasks by **auto-grouping** them into dependency chains via `/fabrio:feature-chain` (dependent tasks build on one shared branch and land as a single PR) instead of the default one-PR-per-task dispatch. Flags combine (`--weekly --chain`). Trigger-agnostic: by hand, via `/loop`, or from cron/launchd/a cloud routine — `--chain` is meant for the unattended scheduled runs where grouping dependent work into one PR is worth more than per-task model routing.
 
 All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials or curl. The server scopes everything to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys**. Headless `claude -p` children spawned in Step 2 inherit this MCP connection automatically (user-scope connections are available everywhere; a local-scope one is inherited when the child runs from the same directory).
 
@@ -40,7 +40,7 @@ Call `list_due_plan_items` — it returns recurring jobs with `next_run_at <= no
 
 For each item where `eligible === true`, branch on `kind`:
 
-- **`execution`** (or missing) → call `queue_plan_item_task { item_id: item.id }`. The server creates one task **and** advances `next_run_at` in one call. Increment `items_queued`.
+- **`execution`** (or missing) → call `queue_plan_item_task { item_id: item.id }`. The server creates a task for **each site the item targets** (one for a single-site item; one per site for a multi-site or all-sites plan, skipping sites already covered) **and** advances `next_run_at` in one call. It returns `tasks` (an array) — increment `items_queued` by `tasks.length`.
 - **`generator`** → **dispatch `/fabrio:run-generator {item.item_number}`** headlessly (same machinery as Step 2 — run it from this directory so it inherits the `fabrio` connection; resolve the model from the item's `difficulty` tier). The skill reads the source, dedups against open tickets, files N tasks, and calls `record_generator_run` (which advances `next_run_at`). After it exits, increment `generators_run` and add the run's `tasks_created` to `tasks_generated`. **Do not** also call `queue_plan_item_task` for a generator.
   - Fallback: if headless dispatch is unavailable, run `/fabrio:run-generator {item.item_number}` inline on the current model.
 
@@ -55,6 +55,8 @@ Skip the rest where `eligible === false` — the `skip_reason` explains why: pla
 ## Step 2 — Implement Ready Code Tasks (sequentially)
 
 Finish **as many ready tasks as possible, strictly one at a time** — never in parallel. When a task can't complete, move on.
+
+> **Mode.** Default (no `--chain`): implement each task on its own branch and PR via `/fabrio:feature-request` — steps **2a–2d** below. With **`--chain`**: implement by auto-grouping dependent tasks into shared-branch chains via `/fabrio:feature-chain` — skip 2a–2d and use **Step 2C** instead. Only one path runs per heartbeat.
 
 Call `list_tasks { type: "feature_request", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }`. Sort so `changes_needed` comes before `ready` (review feedback first). If none, skip this step. Keep a set **`blocked_this_run`**. For each task **T** in order:
 
@@ -75,6 +77,30 @@ The child owns all DB writes (the claim, the PR, its own history + retrospective
 Re-running a partially-done task is safe — Step 3.5 of `/fabrio:feature-request` resumes from existing work.
 
 **d. Continue** — move to the next task regardless of outcome; never stop early. (Opens PRs, **never merges**.)
+
+---
+
+## Step 2C — Implement via Chains (only when `--chain`)
+
+Runs **instead of** 2a–2d. Here `/fabrio:feature-chain` owns the whole implementation pass: it groups the workable tasks into dependency chains, builds each chain on one shared branch, holds a chain (no PR) if a task needs input, and opens one PR per chain. So ops-heartbeat does **not** iterate tasks or run the per-task dependency gate here — `feature-chain` handles ordering and cascades internally.
+
+From the Step 2 `list_tasks` result, take the distinct `site_id`s that have workable tasks. For **each such site**, in order:
+
+**a. Resolve the model** — use the **heaviest** difficulty tier among that site's workable tasks (`heavy` > `standard` > `light`; default `standard` when all null), mapped through the `get_model_tiers` result. A chain runs in one session, so it can't switch models mid-chain; sizing to the heaviest task keeps the hardest work on a capable model.
+
+**b. Dispatch** — run `/fabrio:feature-chain` in auto-group mode scoped to that site, headless on the resolved model, from **this directory** (so it inherits the `fabrio` connection):
+```bash
+claude -p "/fabrio:feature-chain --site {site_id}" --model "$MODEL" --permission-mode acceptEdits
+```
+The child owns all DB writes (claims, chain branches, the PR(s), history, retrospectives). Per-site scoping (rather than a bare all-sites run) lets each site's model track its own workload.
+
+**c. Tally** — after the child exits, re-read that site's tasks with `list_tasks { site_id, type: "feature_request", statuses: ["under_review","in_progress","changes_needed"] }` (or the original numbers via `get_task`): each task now `under_review` **with a `pr_number`** → increment `tasks_implemented` and bump `models_used[{tier}]`; count each **distinct new `pr_number`** once toward `prs_opened` (a chain of N tasks is one PR); any task left `in_progress` with no PR or `is_blocked` (a held chain) → add to `blocked_this_run`.
+
+**d. Fallback** — if the tier lookup is empty, `command -v claude` fails, or the child exits non-zero without any of that site's tasks advancing, invoke `/fabrio:feature-chain --site {site_id}` **inline** in this session and log it on one representative task:
+`log_task_history { task_id, action: "dispatch_fallback", notes: "Headless chain dispatch unavailable/failed — ran /fabrio:feature-chain --site {site_id} inline." }`
+Re-running is safe — `feature-chain` skips work already committed on a chain branch.
+
+**e. Continue** to the next site regardless of outcome. (Opens PRs, **never merges**.)
 
 ---
 
@@ -118,4 +144,4 @@ PRs are open and waiting for your review. Nothing was merged — run /fabrio:mer
 
 ## Permissions — required for unattended (headless) dispatch
 
-Step 2 dispatches each task with `claude -p … --permission-mode acceptEdits`. In `-p` mode Claude Code **cannot prompt** — any tool not on the allow-list fails silently (surfacing as a task that didn't get worked, then falls back to inline). For unattended runs, ensure `.claude/settings.json` allow-lists `mcp__fabrio` (all its tools) plus the shell tools `/fabrio:feature-request` uses: `gh`, `git`, `npm run`, `npx tsc`. Generate a tuned allow-list from real runs with `/fewer-permission-prompts`. Do **not** use `--dangerously-skip-permissions` — an explicit allow-list is safer and sufficient.
+Step 2 dispatches each task with `claude -p … --permission-mode acceptEdits` (`/fabrio:feature-request` by default, or `/fabrio:feature-chain --site …` under `--chain`). In `-p` mode Claude Code **cannot prompt** — any tool not on the allow-list fails silently (surfacing as a task that didn't get worked, then falls back to inline). For unattended runs, ensure `.claude/settings.json` allow-lists `mcp__fabrio` (all its tools) plus the shell tools both skills use: `gh`, `git`, `npm run`, `npx tsc`. Generate a tuned allow-list from real runs with `/fewer-permission-prompts`. Do **not** use `--dangerously-skip-permissions` — an explicit allow-list is safer and sufficient.

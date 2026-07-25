@@ -52,6 +52,8 @@ Required status: **`approved`**. If anything else, log and stop:
 `log_task_history { task_id: task.id, action: "skill_blocked", notes: "Merge skill rejected: status was \"{task.status}\", required \"approved\"" }`
 Output: `Error: Task #{task_number} cannot be merged. Status is "{task.status}" — this skill only runs on "approved" tasks.` Stop.
 
+> **Feature chains:** if this task shares its PR with others (a `/fabrio:feature-chain` run), approving and invoking merge on **any one** of them merges the shared PR and closes the whole chain (Step 8). The invoked task must itself be `approved`; its siblings may still be `under_review` — the merge is the human's go-ahead for the entire PR.
+
 ---
 
 ## Step 4 — Validate PR Exists
@@ -97,10 +99,16 @@ If a local feature branch for this task remains after the remote branch was dele
 
 ---
 
-## Step 8 — Mark Task as Done
+## Step 8 — Mark Task(s) as Done
 
-`update_task { task_id: task.id, fields: { status: "done", merged_at: "{current UTC ISO timestamp}" } }` (the status change is auto-logged). Add the merge note:
-`log_task_history { task_id: task.id, action: "merged", notes: "PR #{task.pr_number} merged into {BASE_BRANCH} — deployment triggered automatically" }`
+A single PR can cover **several** tasks — a `/fabrio:feature-chain` run puts a whole dependency chain on one branch and links every task in it to the same `pr_number`. Merging that PR completes **all** of them, so mark every task on this PR done, not just the invoked one.
+
+Find the siblings: `list_tasks { pr_number: task.pr_number }`. This returns every task sharing the merged PR (just the one for a normal `/fabrio:feature-request`; the whole chain for `/fabrio:feature-chain`). For **each** returned task whose status isn't already `done`:
+
+`update_task { task_id: {sibling.id}, fields: { status: "done", merged_at: "{current UTC ISO timestamp}" } }` (the status change is auto-logged). The merged PR is the source of truth, so a sibling still in `under_review` does **not** need to be individually `approved` first. Add the merge note per task:
+`log_task_history { task_id: {sibling.id}, action: "merged", notes: "PR #{task.pr_number} merged into {BASE_BRANCH} — deployment triggered automatically" }`
+
+Track `{merged_count}` = how many tasks you marked done (1 for a normal task, N for a chain).
 
 ---
 
@@ -125,6 +133,7 @@ This skill didn't write the code, so its retrospective is about the **review cyc
 
 ## Step 9 — Output Summary
 
+**Single task** (`{merged_count}` == 1):
 ```
 ✅ Task #{task_number} merged and done.
   Title:   {task.title}
@@ -132,6 +141,15 @@ This skill didn't write the code, so its retrospective is about the **review cyc
   PR:      {task.pr_url}
   Branch:  deleted after merge
   Status:  done
+The PR has been squash-merged into the repo's base branch. Deployment should be triggered automatically.
+```
+**Chain** (`{merged_count}` > 1) — the merged PR closed the whole chain:
+```
+✅ Chain merged — {merged_count} tasks done via PR #{task.pr_number}.
+  Tasks:   #{n1}, #{n2}, #{n3}   (all → done)
+  Site:    {task.site.name}
+  PR:      {task.pr_url}
+  Branch:  deleted after merge
 The PR has been squash-merged into the repo's base branch. Deployment should be triggered automatically.
 ```
 

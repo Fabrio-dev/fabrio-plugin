@@ -82,17 +82,17 @@ Re-running a partially-done task is safe — Step 3.5 of `/fabrio:feature-reques
 
 ## Step 2C — Implement via Chains (only when `--chain`)
 
-Runs **instead of** 2a–2d. Here `/fabrio:feature-chain` owns the whole implementation pass: it groups the workable tasks into dependency chains, builds each chain on one shared branch, holds a chain (no PR) if a task needs input, and opens one PR per chain. So ops-heartbeat does **not** iterate tasks or run the per-task dependency gate here — `feature-chain` handles ordering and cascades internally.
+Runs **instead of** 2a–2d. Here `/fabrio:feature-chain` owns the whole implementation pass: it groups the workable tasks into dependency chains, builds each chain on one shared branch, holds a chain (no PR) if a task needs input, and opens one PR per chain. So ops-heartbeat does **not** iterate tasks or run the per-task dependency gate here — `feature-chain` handles ordering and cascades internally. It also **routes models per task itself** (Step 2.5 of that skill): within a mixed-tier chain it dispatches each task on its own tier's model. So you don't size the model here — let `feature-chain` orchestrate on a cheap model and fan out per task.
 
 From the Step 2 `list_tasks` result, take the distinct `site_id`s that have workable tasks. For **each such site**, in order:
 
-**a. Resolve the model** — use the **heaviest** difficulty tier among that site's workable tasks (`heavy` > `standard` > `light`; default `standard` when all null), mapped through the `get_model_tiers` result. A chain runs in one session, so it can't switch models mid-chain; sizing to the heaviest task keeps the hardest work on a capable model.
+**a. Model** — dispatch the `feature-chain` orchestrator on the **cheapest** tier's model (like the heartbeat itself — it only does git, grouping, and PR bookkeeping; the real implementation runs in the per-task children it spawns, each on its own mapped model). Load the map with `get_model_tiers` if you haven't.
 
-**b. Dispatch** — run `/fabrio:feature-chain` in auto-group mode scoped to that site, headless on the resolved model, from **this directory** (so it inherits the `fabrio` connection):
+**b. Dispatch** — run `/fabrio:feature-chain` in auto-group mode scoped to that site, headless on that cheap model, from **this directory** (so it inherits the `fabrio` connection):
 ```bash
-claude -p "/fabrio:feature-chain --site {site_id}" --model "$MODEL" --permission-mode acceptEdits
+claude -p "/fabrio:feature-chain --site {site_id}" --model "$ORCH_MODEL" --permission-mode acceptEdits
 ```
-The child owns all DB writes (claims, chain branches, the PR(s), history, retrospectives). Per-site scoping (rather than a bare all-sites run) lets each site's model track its own workload.
+The child (and its own per-task grandchildren) own all DB writes — claims, chain branches, the PR(s), history, retrospectives, and per-task model routing. Per-site scoping keeps each site's chains independent.
 
 **c. Tally** — after the child exits, re-read that site's tasks with `list_tasks { site_id, type: "feature_request", statuses: ["under_review","in_progress","changes_needed"] }` (or the original numbers via `get_task`): each task now `under_review` **with a `pr_number`** → increment `tasks_implemented` and bump `models_used[{tier}]`; count each **distinct new `pr_number`** once toward `prs_opened` (a chain of N tasks is one PR); any task left `in_progress` with no PR or `is_blocked` (a held chain) → add to `blocked_this_run`.
 

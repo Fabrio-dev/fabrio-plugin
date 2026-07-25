@@ -16,6 +16,8 @@ Implement **dependent** `type='feature_request'` tasks together: run them one-at
 
 **Resume:** re-running detects work already committed on the shared branch (per-task `Task #{n}:` commit markers) and picks up from the first task that isn't done yet.
 
+**Model routing (automatic):** a session can't switch models mid-run, so when a chain's tasks span **different difficulty tiers**, each task is implemented in its own headless child on that tier's mapped model (a `light` task on the cheap model, a `heavy` one on the capable model), all on the same shared branch. When every task is the same tier (or it's a one-task chain, or headless dispatch isn't available), the whole chain just runs inline in the current session. See Step 2.5.
+
 ---
 
 ## Step 0 — Setup
@@ -114,9 +116,22 @@ If there's newer feedback, read it (it applies to whichever task(s) it names), r
 
 ---
 
-## Step 3 — Implement Each Task in the Chain (in order)
+## Step 2.5 — Choose Execution Mode (automatic model routing)
 
-For each task **T** in the chain, in order. This mirrors `/fabrio:feature-request` Steps 2–9 **minus** its per-task branch creation and per-task PR — you are already on the shared branch and stay on it.
+A running session can't change models mid-conversation, so a task only runs on its mapped model if it runs in its **own process**. Decide the mode for this chain:
+
+1. **Ensure every task has a `difficulty`** — you need the tier to pick a model. For any task whose `difficulty` is null, classify it now (`light` / `standard` / `heavy` — rubric in 3f) and persist with `update_task`.
+2. **Load the tier → model map:** `get_model_tiers`.
+3. **Routed mode** — use it when the chain's tasks span **more than one tier** AND headless dispatch is available (`command -v claude` succeeds and `mcp__fabrio` is allow-listed for `-p` runs). Each task runs on its own tier's model → **Step 3R**.
+4. **Inline mode** — use it when all tasks are the **same tier**, it's a **one-task chain**, or headless dispatch isn't available. The whole chain runs in the current session on its current model → **Step 3**.
+
+Print the choice. For routed mode, print the per-task model plan, e.g. `Routing: #12→haiku (light) · #13→opus (heavy) · #14→haiku (light)`.
+
+---
+
+## Step 3 — Implement Each Task in the Chain — Inline mode (in order)
+
+Used when Step 2.5 chose **inline mode**. For each task **T** in the chain, in order. This mirrors `/fabrio:feature-request` Steps 2–9 **minus** its per-task branch creation and per-task PR — you are already on the shared branch and stay on it. (In **routed mode**, the same per-task work is done by headless children instead — see Step 3R — and you skip this Step 3.)
 
 ### 3a — Already done on this branch? (resume marker)
 ```bash
@@ -165,6 +180,40 @@ Do **not** create a PR and do **not** set `under_review` yet — T stays `in_pro
 Run `npm run build`. The next task builds on top of T, so the chain is only as sound as each layer — **do not move to the next task until the build is green.** Fix issues, re-run `npx tsc --noEmit` then `npm run build`, commit the fix (`Task #{T.task_number}: fix build`), `log_task_history { action: "build_fixed" }`. Only continue at exit 0.
 
 When every task in the chain has been implemented and the final build is green, go to **Step 5**.
+
+---
+
+## Step 3R — Routed mode (per-task model dispatch)
+
+Used when Step 2.5 chose **routed mode**. You are already on the shared chain branch (Step 2). Implement the chain by dispatching one headless child per task, each on its own tier's model, **sequentially** (the next task builds on the previous one's commits, which are on disk once the child exits). For each task **T** in order:
+
+1. **Already done?** `git log {branch} --grep "^Task #{T.task_number}:" -1` — if a commit exists, T is on the branch already → skip to the next task.
+2. **Resolve T's model** from the `get_model_tiers` map using `T.difficulty` (default `standard`).
+3. **Dispatch one child** to implement only T on the current branch — run it from the repo dir so it inherits the `fabrio` connection:
+   ```bash
+   claude -p "/fabrio:feature-chain --step {T.task_number}" --model "$T_MODEL" --permission-mode acceptEdits
+   ```
+   Wait for it to exit before the next task — never dispatch chain tasks in parallel (they share one checkout).
+4. **After the child exits, read the outcome:**
+   - A new `Task #{T.task_number}:` commit exists on `{branch}` **and** `get_task` shows T `in_progress` → success; continue to the next task.
+   - **No** commit AND T has an open question / `is_blocked` / a posted decision → the child **held** on T. Go to **Step 4** (hold the chain; cascade to downstream tasks; no PR).
+   - No commit and no block (the child errored) → **fallback:** implement T inline in this session by running Step 3's 3b–3k for T on the current model, and log `log_task_history { task_id: T.id, action: "dispatch_fallback", notes: "Headless --step dispatch failed — implemented T inline." }`.
+
+When every task has its commit and the final build is green, go to **Step 5**. (Step 5's PR is always opened by the parent; per-task retrospectives are run by whoever implemented the task — Step 6.)
+
+> **Unattended runs:** the `--step` children run headless (`-p`), which can't prompt, so `.claude/settings.json` must allow-list `mcp__fabrio` plus `gh`, `git`, `npm run`, `npx tsc` — the same allow-list `/fabrio:ops-heartbeat` documents. Interactive runs prompt as normal.
+
+---
+
+## `--step {n}` — single-task child (internal; used by Step 3R)
+
+**Not a human entry point.** Routed mode dispatches this to implement exactly one task on the **already-checked-out** chain branch, then exit. It never sets up a branch, never resets to base, and never touches a PR.
+
+1. Run Step 0's `gh` / MCP / source-root checks. **Skip** Step 1, Step 2, and Step 2.5 — the parent already owns grouping, the branch, and mode selection.
+2. Confirm you're on a `feature/chain-*` branch: `git branch --show-current`. If not, stop with an error (`--step must be run by the chain orchestrator on an existing chain branch`) — do not create one.
+3. Implement task `{n}` by running Step 3's **3b → 3k** for it (fetch/validate, open-question check, learnings/decisions, review-for-clarity, difficulty, plan checkpoint, claim, implement, commit with the `Task #{n}:` marker, build gate).
+4. **On a block** (an open question, or you open a question/decision in 3c/3e, or an invalid status): do **not** commit; post the question as usual (which flags the task blocked) and **exit without error**. The parent detects the missing commit + block and holds the chain.
+5. **On success**, after the build gate, run task `{n}`'s **retrospective** (Step 6 rubric) — you implemented it, so you have the context. Do **not** open a PR or set `under_review` (the parent does that once the whole chain lands). Then exit.
 
 ---
 
@@ -228,9 +277,13 @@ Then for **every** task in the chain: `update_task { task_id, fields: { pr_url, 
 
 ## Step 6 — Retrospective (per task)
 
-Run once **per task in the chain** (same rubric as `/fabrio:feature-request` Step 11.5). For each T, record 0–3 generalizable learnings — `code_pattern` (codebase surprises), `pitfall` (first-attempt failures), `review_feedback` (for `changes_needed` tasks), `preference`, `process`. **Dedup** against that task's `loaded_learnings`: `reinforce_learning { learning_id }` if it restates one, else `record_learning { department: T.department, category, title, content, site_id: T.site_id (or omit for portfolio-wide), source_task_id: T.id }`. Always `log_task_history { task_id: T.id, action: "retrospective_saved", notes: "Recorded {N}, reinforced {M}" }`.
+Same rubric as `/fabrio:feature-request` Step 11.5. The **implementer** records each task's retrospective, because it has the richest context:
+- **Inline mode:** the parent runs the retrospective here, once per task in the chain.
+- **Routed mode:** each `--step` child already ran its own task's retrospective right after committing (it loaded that task's learnings and did the work), so the parent does **not** repeat them — skip to Step 7.
 
-Also worth a `process` learning when the chain itself taught you something (e.g. two tasks that should have been one, or an ordering that had to change).
+For each task, record 0–3 generalizable learnings — `code_pattern` (codebase surprises), `pitfall` (first-attempt failures), `review_feedback` (for `changes_needed` tasks), `preference`, `process`. **Dedup** against that task's `loaded_learnings`: `reinforce_learning { learning_id }` if it restates one, else `record_learning { department: T.department, category, title, content, site_id: T.site_id (or omit for portfolio-wide), source_task_id: T.id }`. Always `log_task_history { task_id: T.id, action: "retrospective_saved", notes: "Recorded {N}, reinforced {M}" }`.
+
+Regardless of mode, the parent may add one `process` learning when the chain itself taught it something (e.g. two tasks that should have been one, or an ordering that had to change).
 
 ---
 

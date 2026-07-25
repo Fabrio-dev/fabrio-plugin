@@ -124,12 +124,21 @@ A running session can't change models mid-conversation, so each task only lands 
 
 1. **Ensure every task has a `difficulty`** (you need the tier to pick a model). Classify any null ones now (`light` / `standard` / `heavy` — rubric in 3f) and persist with `update_task`.
 2. **Load the tier → model map:** `get_model_tiers`.
-3. **Is headless dispatch available?** Yes when `command -v claude` succeeds AND the `fabrio` MCP tools work from a `-p` child (true for unattended/allow-listed runs, and for interactive runs where you can approve the child's prompts).
+3. **Probe headless dispatch — actually test it, don't assume.** A dispatched child must (a) be able to run at all, which means the `claude` CLI is authenticated, and (b) reach the `fabrio` MCP. Run a trivial child and check it returns cleanly:
+   ```bash
+   claude -p "reply with exactly: ok" --model haiku 2>&1
+   ```
+   Headless dispatch is available **only if that prints `ok`** (exit 0). If it prints anything else, dispatch is **not** available — read the reason and fall back to inline (Step 3), telling the user the exact fix:
+   - `Failed to authenticate` / `OAuth session expired` / `loggedIn: false` / any auth error → the `claude` CLI isn't signed in, so no child can run. **Tell the user:** run `claude auth login` (interactive), or for hands-off/scheduled runs `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) in `~/.claude/settings.json` — see **Fabrio → Settings → API keys** for the full setup.
+   - a permission/prompt error or a hang on an `mcp__fabrio` call → the `-p` child isn't allowed to use the MCP unattended. **Tell the user:** add `mcp__fabrio` (plus `Bash(git:*)`, `Bash(gh:*)`, `Bash(npm run:*)`, `Bash(npx:*)`) to `permissions.allow` in `~/.claude/settings.json` (user scope, so it applies in every repo).
+   - `command not found` → `claude` not on `PATH`.
+
+   **Never silently pretend to route.** If the probe fails, you run inline **and** print the reason + fix, so the user can enable routing.
 
 Then pick the mode:
 
-- **Routed mode — the default whenever headless dispatch is available.** Go to **Step 3R**; **every** task is dispatched to a headless child on its own tier's model. Use routed mode **even if all tasks share one tier**, because the session's model is not guaranteed to equal that tier's model (a chain of `heavy` tasks in a Haiku session must still route to the heavy model). This is the only mode that guarantees each task runs on its mapped model.
-- **Inline fallback — only when headless dispatch is NOT available.** Go to **Step 3**; the whole chain runs in this session on its current model. Print a warning: `⚠️  Headless dispatch unavailable — running the whole chain inline on {current model}; tasks are NOT routed to their mapped models.`
+- **Routed mode — the default whenever the probe passed.** Go to **Step 3R**; **every** task is dispatched to a headless child on its own tier's model. Use routed mode **even if all tasks share one tier**, because the session's model is not guaranteed to equal that tier's model (a chain of `heavy` tasks in a Haiku session must still route to the heavy model). This is the only mode that guarantees each task runs on its mapped model.
+- **Inline fallback — only when the probe failed.** Go to **Step 3**; the whole chain runs in this session on its current model. Print a warning that names the probe failure and its fix: `⚠️  Headless dispatch unavailable ({probe reason}) — running the whole chain inline on {current model}; tasks are NOT routed to their mapped models. Fix: {the fix from above}.`
 
 Print the decision. For routed mode, print the per-task plan, e.g. `Routing: #64→opus (heavy) · #66→sonnet (standard) · #67→opus (heavy) …`.
 
@@ -213,7 +222,7 @@ For each task **T** in order:
 
 When every task has its commit and the final build is green, go to **Step 5**. (Step 5's PR is always opened by the parent; per-task retrospectives are run by whoever implemented the task — Step 6.)
 
-> **Unattended runs:** the `--step` children run headless (`-p`), which can't prompt, so `.claude/settings.json` must allow-list `mcp__fabrio` plus `gh`, `git`, `npm run`, `npx tsc` — the same allow-list `/fabrio:ops-heartbeat` documents. Interactive runs prompt as normal.
+> **Unattended runs:** the `--step` children run headless (`-p`), so they need two things set up once (both covered in **Fabrio → Settings → API keys**): (1) an authenticated CLI that stays signed in — `claude auth login`, or a persistent `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` for scheduled runs; and (2) a **user-scope** allow-list in `~/.claude/settings.json` (`mcp__fabrio` plus `Bash(git:*)`, `Bash(gh:*)`, `Bash(npm run:*)`, `Bash(npx:*)`), since a child runs in each site's repo dir where project settings don't apply. The Step 2.5 probe catches both if they're missing. Interactive runs prompt as normal.
 
 ---
 

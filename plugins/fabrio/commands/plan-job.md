@@ -24,6 +24,8 @@ Call `get_plan_item { item_number }`. Capture:
 - `is_blocked` / existing questions — see Step 2.
 - `kind` (`execution` | `generator`), `frequency`, `department`, and site context (`plan.site.name`, `live_url`, `ai_context`).
 
+Then call `list_site_resources { site_id: plan.site_id }` — the third-party tools this site is wired to (monitoring today; analytics/hosting later). Each entry gives `provider`, `access_method`, the non-secret connection recipe, the per-site config (`service`, `env`, `project_slug`, `app_id`, …), `mcp_server_name`, and `credential_keys` — the **names** of keys a machine must have in `~/.fabrio/credentials.json`. Fabrio never stores the values. **This is your source list: prefer a real attached resource over asking a human.**
+
 ---
 
 ## Step 2 — Check for open questions (don't plan while blocked)
@@ -37,7 +39,16 @@ Then load prior **decisions** so you don't re-ask what's settled: `list_decision
 
 ## Step 3 — Decide whether you need human input
 
-Read the `description` and decide: **can you write a concrete, runnable plan without guessing at something a human should decide?** Real decisions worth asking about: *which* tracker/tool when the description is vague, *which* project/board/label, where credentials come from, the top-N cap, or which department the filed tickets belong to. Do **not** ask about things you can reasonably choose or that a `decided` decision already covers.
+Read the `description` and decide: **can you write a concrete, runnable plan without guessing at something a human should decide?** Real decisions worth asking about: *which* tracker/tool when the description is vague, *which* project/board/label, the top-N cap, or which department the filed tickets belong to. Do **not** ask about things you can reasonably choose or that a `decided` decision already covers.
+
+**Resources answer the old "where do credentials come from?" question — stop asking it.** If Step 1 returned a resource whose type/provider matches what the description names, use it and record its id in the plan. Only ask when:
+- the site has **no** attached resource for the category the description needs (e.g. "pull error rates" with nothing of type `monitoring` attached), or
+- **two or more** attached resources of that type could plausibly serve it.
+
+In the first case the fix is a human action in the web UI, not an answer — say so verbatim so it's actionable, and stop:
+> This job needs a **monitoring** resource for {site.name}, but none is attached. Add one in **Fabrio → Resources**, attach it to this site, then re-run `/fabrio:plan-job {item_number}`.
+
+In the second case, prefer a structured `create_decision` whose `options` are the candidate resources (`key` = resource id, `label` = "{provider} — {name}").
 
 If you need input, open a blocking question **on the job** (use the `id` from Step 1 as `plan_item_id`) and stop:
 - **Structured decision** (preferred when there are clear options): `create_decision { site_id, key, title, description, options:[…] }` (idempotent), then `create_task_question { plan_item_id: id, content, decision_id }`.
@@ -53,7 +64,11 @@ Then stop:
 ## Step 4 — Write the job_plan
 
 When you have enough, draft a numbered, reusable procedure the job follows **every** run. Cover:
-1. **Fetch** — exactly how to pull candidate items from the source named in the description (which MCP tool / HTTP endpoint + query/filter). If the source isn't reachable yet, still write the plan but mark the fetch step **requires <X> to be connected** so `/fabrio:run-generator` fails cleanly.
+1. **Fetch** — exactly how to pull candidate items from the source. When the source is an attached resource, **open the step with a machine-readable line** so `/fabrio:run-generator` can preflight it before doing any work:
+
+   `resource: <resource_id> (<provider> · <access_method> · mcp: <mcp_server_name>)`
+
+   Then spell out the concrete call — which MCP tool or HTTP endpoint, and the query/filter, scoped by the resource's per-site config (e.g. `service:{config.service} env:{config.env}` for Datadog, `project:{config.project_slug}` for Sentry). **Never inline a credential value into a plan** — name the `credential_keys` and let the runner read them from `~/.fabrio/credentials.json`. If the resource exists in Fabrio but nobody has connected it on a machine yet, still write the plan: `/fabrio:run-generator` preflights it and fails cleanly with the setup command rather than half-running.
 2. **Select & rank** — how to cluster/rank and how many to file per run (a top-N cap).
 3. **Shape each ticket** — title format + what evidence to put in the description (IDs, counts, links, repro).
 4. **Dedup** — skip issues that already have an open ticket from this job (`/fabrio:run-generator` gets `open_tasks` from `get_plan_item`).

@@ -30,17 +30,12 @@ gh auth status                # GitHub CLI must be authed
   > ```
   > Restart Claude Code and re-invoke.
 
-**Source root** — the site repos live at `{source_root}/{site.relative_path}` (`get_site` / `get_task` return `relative_path`). Read `source_root` from the `FABRIO_SOURCE_ROOT` environment variable. **If it's unset**, tell the user it needs to be set and give them these instructions, then ask for the path to use for this run (so the run isn't blocked):
+**Source root** — the site repos live at `{source_root}/{site.relative_path}` (`get_site` / `get_task` return `relative_path`). Resolve `source_root` in this order (stop at the first that yields a value):
+1. The `FABRIO_SOURCE_ROOT` env var, if set (back-compat — power users may keep this).
+2. Else read `~/.fabrio/config.json` (`%USERPROFILE%\.fabrio\config.json` on Windows, `$HOME/.fabrio/config.json` otherwise) and use its `source_root`.
+3. Else **ask once and persist it** (so the run isn't blocked and future runs are silent): prompt *"What's the absolute path to the folder that holds your site repos?"*, then write `source_root` into `~/.fabrio/config.json` (create the `.fabrio` dir + file, merging any existing keys — see `/fabrio:configure` Step 2 for the exact write), use it for this run, and mention they can re-run `/fabrio:configure` to change it later.
 
-> `FABRIO_SOURCE_ROOT` isn't set — I need it to find your repos on disk. Claude Code reads it from its own environment (not Fabrio's `.env.local`). Set it once, either way:
-> - **Recommended** — add an `env` block to `~/.claude/settings.json`, then restart Claude Code:
->   ```json
->   { "env": { "FABRIO_SOURCE_ROOT": "C:\\Users\\you\\Source" } }
->   ```
->   (macOS/Linux: `"/Users/you/Source"`.)
-> - **Or** set a real OS/shell env var before launching `claude` (Windows user env var, or `export FABRIO_SOURCE_ROOT=/Users/you/Source` in your shell profile).
->
-> For now, what's the absolute path to the folder that holds your site repos? I'll use it for this run.
+Skip the prompt entirely if step 1 or 2 supplied a path.
 
 **Base branch** — never assume `main`; resolve at runtime from inside each target repo and use it for every checkout/pull/`--base`:
 ```bash

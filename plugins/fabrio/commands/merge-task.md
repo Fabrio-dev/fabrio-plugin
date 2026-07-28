@@ -34,15 +34,14 @@ Extract the task number. If none: `Error: Task number required. Usage: /fabrio:m
 
 ## Step 2 — Fetch Task
 
-Call `get_task { task_number, include_history: true }`. If null: `Error: Task #{task_number} not found.` Store as `task`. Full site path = `{source_root}/{task.site.relative_path}` where `source_root` comes from the `FABRIO_SOURCE_ROOT` env var.
+Call `get_task { task_number, include_history: true }`. If null: `Error: Task #{task_number} not found.` Store as `task`. Full site path = `{source_root}/{task.site.relative_path}`.
 
-**If `FABRIO_SOURCE_ROOT` is unset**, tell the user it needs to be set (Claude Code reads it from its own environment, not Fabrio's `.env.local`) and give the fix, then ask for the path to use for this run:
+**Resolve `source_root`** in this order (stop at the first that yields a value):
+1. The `FABRIO_SOURCE_ROOT` env var, if set (back-compat — power users may keep this).
+2. Else read `~/.fabrio/config.json` (`%USERPROFILE%\.fabrio\config.json` on Windows, `$HOME/.fabrio/config.json` otherwise) and use its `source_root`.
+3. Else **ask once and persist it**: prompt *"What's the absolute path to the folder that holds your site repos?"*, then write `source_root` into `~/.fabrio/config.json` (create the `.fabrio` dir + file, merging with any existing keys — see `/fabrio:configure` Step 2 for the exact write), use it for this run, and tell the user they can re-run `/fabrio:configure` to change it.
 
-> `FABRIO_SOURCE_ROOT` isn't set — set it once so I can find your repos:
-> - **Recommended** — add to `~/.claude/settings.json` and restart Claude Code: `{ "env": { "FABRIO_SOURCE_ROOT": "C:\\Users\\you\\Source" } }` (macOS/Linux: `"/Users/you/Source"`).
-> - **Or** set a real OS/shell env var before launching `claude`.
->
-> For now, what's the absolute path to the folder that holds your site repos?
+Skip the prompt entirely if step 1 or 2 supplied a path.
 
 ---
 

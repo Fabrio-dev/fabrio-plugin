@@ -1,6 +1,6 @@
 {
   "name": "fabrio",
-  "version": "0.3.4",
+  "version": "0.3.6",
   "description": "Fabrio workflow commands (configure, feature-request, feature-chain, ops-heartbeat, merge-task, generate-plan, revise-plan, consolidate-learnings). Installs the /fabrio:* slash commands; connect your account's data separately with the one-line command shown in Fabrio → Settings → API keys.",
   "author": { "name": "Fabrio", "url": "https://fabrio.dev" },
   "homepage": "https://fabrio.dev"

@@ -1,10 +1,12 @@
 ---
-description: "Turns a recurring job's description into a saved, reusable plan (job_plan) it re-runs each cadence — asking blocking questions when it needs human input."
+description: "Turns a recurring job's description into a saved, reusable tree of steps it re-runs each cadence — asking blocking questions when it needs human input."
 ---
 
 # Plan Job
 
-Every recurring **job** has a human `description` (what it does / how it gathers work) and a required, AI-authored **`job_plan`** — the exact procedure it re-runs each cadence. This skill compiles the description into that plan. It mirrors how a task has a human `description` + an AI `task_plan`, and — like `/fabrio:feature-request` — it can **ask a blocking question** and wait for a human when a real choice is needed.
+Every recurring **job** has a human `description` (what it does / how it gathers work) and a required, AI-authored **procedure** — an ordered, nested tree of **steps** it re-runs each cadence. This skill compiles the description into those steps. It mirrors how a task has a human `description` + an AI `task_plan`, and — like `/fabrio:feature-request` — it can **ask a blocking question** and wait for a human when a real choice is needed.
+
+Steps replaced the old single `job_plan` text blob so that a job's stages have somewhere to live. Before, they had nowhere to go — so plans emitted them as sibling initiatives instead, and a job could end up "blocked by" a stage of its own procedure. `job_plan` still exists, but it is now *generated* from the steps.
 
 **Invocation:** `/fabrio:plan-job <item_number>` — the job's human id, shown as `#N` on the job in the plan UI.
 
@@ -12,7 +14,13 @@ Every recurring **job** has a human `description` (what it does / how it gathers
 
 ## Prerequisites
 
-All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools). If unavailable, stop and tell the user to connect it (**Fabrio → Settings → API keys** → run the Connect command), then restart Claude Code and re-invoke.
+All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools). If the tools aren't available, stop and tell the user the server isn't connected — give them exactly this, and nothing else:
+
+> Create a key in **Fabrio → Settings → API keys**, then run the **Connect command** shown there:
+> ```
+> claude mcp add --transport http -s user fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
+> ```
+> Restart Claude Code and re-invoke.
 
 ---
 
@@ -61,33 +69,65 @@ Then stop:
 
 ---
 
-## Step 4 — Write the job_plan
+## Step 4 — Design the step tree
 
-When you have enough, draft a numbered, reusable procedure the job follows **every** run. Cover:
-1. **Fetch** — exactly how to pull candidate items from the source. When the source is an attached resource, **open the step with a machine-readable line** so `/fabrio:run-generator` can preflight it before doing any work:
+A job's procedure is an ordered, **nested** tree of steps, not one blob of prose. Draft that tree.
+
+**What makes a step.** One step = one verb over one input. Nest a step **under** another when it must run *once per item* of that step's output — that is a `foreach`. Use a `branch` when a step only sometimes applies. Every leaf must be executable without re-reading the original description.
+
+**Step types**
+- `action` (default) — do one thing.
+- `foreach` — repeat its `children` once per item of `foreach_source` (`"step:<output_key>"`, or omit to iterate the immediately preceding step's output). Set `max_iterations` to cap a run; the runner defaults to 10.
+- `branch` — run its `children` only when `condition` holds.
+
+Give a step an `output_key` (snake_case) when a later step needs to name its result.
+
+**Put the detail in `instructions`, not in the titles.** Concrete queries, field names, path mappings, title formats, redaction rules, noise filters — all of it belongs in the owning step's `instructions`, verbatim. A tree of thin titles is a regression against a good prose plan.
+
+**Limits:** depth 3, 12 top-level steps, 60 total. If you need more, fold detail into `instructions` rather than adding levels.
+
+**Cover these concerns across the tree:**
+1. **Fetch** — how to pull candidate items from the source. When the source is an attached resource, **open that step's `instructions` with a machine-readable line** so `/fabrio:run-generator` can preflight it before doing any work:
 
    `resource: <resource_id> (<provider> · <access_method> · mcp: <mcp_server_name>)`
 
-   Then spell out the concrete call — which MCP tool or HTTP endpoint, and the query/filter, scoped by the resource's per-site config (e.g. `service:{config.service} env:{config.env}` for Datadog, `project:{config.project_slug}` for Sentry). **Never inline a credential value into a plan** — name the `credential_keys` and let the runner read them from `~/.fabrio/credentials.json`. If the resource exists in Fabrio but nobody has connected it on a machine yet, still write the plan: `/fabrio:run-generator` preflights it and fails cleanly with the setup command rather than half-running.
+   Then spell out the concrete call — which MCP tool or HTTP endpoint, and the query/filter, scoped by the resource's per-site config (e.g. `service:{config.service} env:{config.env}` for Datadog, `project:{config.project_slug}` for Sentry). **Never inline a credential value** — name the `credential_keys` and let the runner read them from `~/.fabrio/credentials.json`. If the resource exists in Fabrio but nobody has connected it on a machine yet, still author the steps: `/fabrio:run-generator` preflights and fails cleanly with the setup command rather than half-running.
 2. **Select & rank** — how to cluster/rank and how many to file per run (a top-N cap).
-3. **Shape each ticket** — title format + what evidence to put in the description (IDs, counts, links, repro).
-4. **Dedup** — skip issues that already have an open ticket from this job (`/fabrio:run-generator` gets `open_tasks` from `get_plan_item`).
-5. **Record** — end each run with `record_generator_run`.
+3. **Dedup** — skip issues that already have an open ticket from this job (`/fabrio:run-generator` gets `open_tasks` from `get_plan_item`). Make this its own step *before* the loop that files tickets.
+4. **Shape each ticket** — title format + what evidence goes in the description (IDs, counts, links, repro). This is normally a step inside the `foreach`.
 
-Keep it self-contained: executable without re-reading the original description.
+Do **not** add a "record the run" step — the runner records every run itself.
+
+**Shape to aim for:**
+```
+1. Preflight the monitoring resource                        action   → resource
+2. Fetch and cluster errors for the window                  action   → clusters
+3. Filter known noise                                       action   → candidates
+4. Rank and cap to the top 3                                action   → selected
+5. For each selected issue                foreach (step:selected, max 3)
+   5.1 Investigate the codebase for the fault               action
+   5.2 File a ticket with the remediation plan              action
+```
 
 ---
 
 ## Step 5 — Save it
 
-Call `update_plan_item { plan_item_id: id, fields: { job_plan: "<the procedure>", kind: "generator" } }` (use the `id` from Step 1) for a ticket-filing job (set `kind: "generator"` if not already). For a simple recurring task that just needs a documented plan, save `job_plan` and leave `kind: "execution"`.
+Call `replace_job_steps { plan_item_id: id, steps: [ … ] }` (use the `id` from Step 1). It replaces the job's whole tree, so send every step each time.
+
+For a ticket-filing job also call `update_plan_item { plan_item_id: id, fields: { kind: "generator" } }` if it isn't one already. A simple recurring task that just needs a documented procedure keeps `kind: "execution"` — it still benefits from steps.
+
+**Do not write `job_plan`.** It is generated from the steps server-side, and `update_plan_item` rejects the field once a job has any.
+
+If `replace_job_steps` isn't available in this session, the connected Fabrio predates nested steps: fall back to `update_plan_item { plan_item_id: id, fields: { job_plan: "<the procedure as numbered prose>" } }` and tell the user to update Fabrio.
 
 ---
 
 ## Step 6 — Output summary
 
 ```
-✅ Job plan saved for "{item.title}" ({frequency} · {department})
+✅ Job procedure saved for "{item.title}" ({frequency} · {department})
+{N} steps{, including a foreach over {what}}
 Source: {how it fetches work — e.g. "Jira project ABC via MCP"}
 {Files up to {N} tickets/run, deduped against open ones. | Queues one task/run.}
 

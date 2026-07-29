@@ -1,10 +1,10 @@
 ---
-description: "Runs a recurring generator job once — follows its saved plan to read a source, dedup against open tickets, and file a task per new issue."
+description: "Runs a recurring generator job once — walks its saved step tree to read a source, dedup against open tickets, and file a task per new issue."
 ---
 
 # Run Generator
 
-Execute one cycle of a **generator** job: follow its saved `job_plan` to pull work from the job's source, drop anything that already has an open ticket, and file a task per remaining issue. A generator never "completes" — it keeps producing tickets on its cadence.
+Execute one cycle of a **generator** job: walk its saved **step tree** to pull work from the job's source, drop anything that already has an open ticket, and file a task per remaining issue — recording what each step did as you go, so a failed run points at the step that stopped it. A generator never "completes"; it keeps producing tickets on its cadence.
 
 **Invocation:** `/fabrio:run-generator <item_number>` — the job's human id (`#N`). Also dispatched automatically by `/fabrio:ops-heartbeat` for due generators.
 
@@ -12,24 +12,42 @@ Execute one cycle of a **generator** job: follow its saved `job_plan` to pull wo
 
 ## Prerequisites
 
-All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools). If unavailable, stop and tell the user to connect it (**Settings → API keys** → Connect command), then re-invoke.
+All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools). If the tools aren't available, stop and tell the user the server isn't connected — give them exactly this, and nothing else:
+
+> Create a key in **Fabrio → Settings → API keys**, then run the **Connect command** shown there:
+> ```
+> claude mcp add --transport http -s user fabrio https://fabrio.dev/api/mcp --header "Authorization: Bearer fab_live_YOUR_KEY"
+> ```
+> Restart Claude Code and re-invoke.
 
 ---
 
-## Step 1 — Fetch the job + its plan
+## Step 1 — Fetch the job + its procedure
 
 Call `get_plan_item { item_number }`. Capture:
 - `id` — the job's UUID; **use it as `plan_item_id` for the write tools below**.
 - `kind` — must be `generator`. If not, stop: this skill only runs generators.
-- `job_plan` — the procedure to follow. If empty, stop and tell the user to run `/fabrio:plan-job {item_number}` first.
+- `steps` — the job's nested procedure. Each node has `id`, `path` (`"5.2"`), `title`, `instructions`, `step_type`, `output_key`, `foreach_source`, `max_iterations`, `condition`, `children`.
+- `job_plan` — the compiled rendering of those steps, or hand-written prose for a job authored before steps existed.
 - `open_tasks` — tickets already spawned from this job that are still open. **This is your dedup set.**
 - `department`, site context — for shaping tickets.
+
+**Pick a mode:**
+- `steps` non-empty → **step mode** (Steps 1.6–2).
+- `steps` empty but `job_plan` set → **legacy prose mode** (Step 2.9).
+- Neither → stop, and tell the user to run `/fabrio:plan-job {item_number}` first.
+
+---
+
+## Step 1.4 — Open the run
+
+`open_generator_run { plan_item_id: id, steps_total: <count of ALL nodes in the tree, children included — omit in legacy prose mode> }` → capture `run_id`. Do this **before** any work, including the preflight below, so every outcome has somewhere to attach and a run that dies mid-way still leaves a trace.
 
 ---
 
 ## Step 1.5 — Resolve and preflight the job's resource
 
-If the `job_plan`'s **Fetch** step opens with a resource line — `resource: <id> (<provider> · <access_method> · mcp: <server>)` — resolve it **before doing any work**:
+If the **Fetch** step's `instructions` open with a resource line — `resource: <id> (<provider> · <access_method> · mcp: <server>)` — resolve it **before doing any work**. (In legacy prose mode, look for the same line in `job_plan`.)
 
 1. Call `get_resource { resource_id }`. If the plan names only a category, call `list_site_resources { site_id: <the job's site>, resource_type: "<type>" }` and take the first match. A resource the plan names that no longer exists counts as unreachable.
 
@@ -39,45 +57,79 @@ If the `job_plan`'s **Fetch** step opens with a resource line — `resource: <id
 
 3. **On success**, call `record_resource_check { resource_id, status: "ok" }` and continue. This is the only way the Fabrio UI ever learns this machine can reach the resource — the browser can't see your local MCP servers or credentials file.
 
-4. **On failure, stop cleanly. Never prompt** — `/fabrio:ops-heartbeat` dispatches this skill headlessly and a prompt would hang the whole cycle. Make **both** calls, then report and stop:
+4. **On failure, stop cleanly. Never prompt** — `/fabrio:ops-heartbeat` dispatches this skill headlessly and a prompt would hang the whole cycle. Make the calls below, then report and stop:
    - `record_resource_check { resource_id, status: "unreachable" | "unauthenticated", detail: "<one line + the exact fix>" }`
-   - `record_generator_run { plan_item_id: id, items_found: 0, tasks_created: 0, status: "failed", summary: "Source unavailable: <provider> — <detail>" }`
+   - in step mode, `record_job_step { run_id, job_step_id: <the preflight step>, status: "failed", summary: "<provider> unreachable" }`
+   - `record_generator_run { plan_item_id: id, run_id, items_found: 0, tasks_created: 0, status: "failed", failed_step_id: <the preflight step>, summary: "Source unavailable: <provider> — <detail>" }`
 
    Put copy-paste remediation in `detail` so the UI can show it verbatim, e.g. `"MCP server 'sentry' not connected on this machine — run: claude mcp add --transport http sentry https://mcp.sentry.dev/mcp, restart Claude Code, approve the OAuth prompt."` The `get_resource` result carries `setup_command` — use it rather than inventing one.
 
 ---
 
-## Step 2 — Follow the plan to gather candidates
+## Step 2 — Walk the step tree
 
-Execute the **Fetch** and **Select & rank** steps exactly as written in `job_plan`, using whatever source it names (MCP tools, HTTP API, etc.) — for a resource-backed job that's the one resolved in Step 1.5, scoped by its per-site config (`service`, `env`, `project_slug`, `app_id`, …). Produce a ranked, top-N list of candidate issues.
+Work the root steps in order. Keep one scratchpad in context:
 
-If the source fails **mid-fetch** — it preflighted fine but then errored (expired OAuth, rate limit, revoked key) — take the same clean exit as Step 1.5 §4: `record_resource_check` with the real status, then `record_generator_run { plan_item_id: id, items_found: 0, tasks_created: 0, status: "failed", summary: "Source unavailable: <detail>" }`, and report it. This still advances the cadence so the job retries next period — do not leave it wedged, and do not prompt.
+```
+outputs = { <output_key>: <what that step produced>, ... }
+```
 
----
+When a step declares an `output_key`, file its result there and **state the count out loud** ("`clusters` = 14 error clusters") so a long run can't lose it. Steps without an `output_key` produce transient results. None of this goes to the database — only one-line receipts do.
 
-## Step 3 — Dedup
+**`action`** — do what `instructions` says. Then `record_job_step { run_id, job_step_id: <node id>, status: "completed", summary: "<one line>" }`.
 
-For each candidate, check `open_tasks` (title + gist) for an existing open ticket covering the same issue. **Skip matches** — don't re-file. Only genuinely new issues proceed. This is what makes repeated runs safe.
+**`foreach`** — resolve the collection:
+1. `foreach_source: "step:<key>"` → `outputs[key]`. If that key was never produced, the step fails.
+2. `foreach_source` absent → the output of the **immediately preceding sibling step**. Restate that list as short labels *before* entering the loop.
 
----
+Cap iterations at `max_iterations`, else **10**. If the collection is over the cap, drop the excess and name what you dropped in the summary — a truncated run must never read as "nothing else found". If it's empty, record the node `completed` with `summary: "0 items"` and skip its children.
 
-## Step 4 — File a task per new issue
+Run the node's `children` in order for each element. Then record **one** receipt for the foreach node itself: `summary: "12 items · 10 ok · 2 failed"`.
 
-For each new issue, call `create_generator_task { plan_item_id: id, title, description, ... }`:
-- `title` — concise, per the plan's title format.
-- `description` — carry the evidence the plan specified (IDs, counts, affected areas, links, repro steps) so the downstream implementer has everything.
+**`branch`** — evaluate `condition`. True → run its `children`. False → `record_job_step { …, status: "skipped" }` and do **not** descend or record its children.
+
+### Recording discipline
+
+These bounds are the difference between useful run history and a write storm:
+1. One receipt per **root** step, always — this is what makes "stopped at step 4" work.
+2. One receipt per **foreach node**, summarising the whole loop.
+3. Inside a loop, a receipt per **iteration only when that iteration FAILED** (`iteration`, `iteration_label`). Never one per child per iteration.
+4. `summary` is one short line, ~200 chars. It is a receipt, not a transcript — no data dumps, no stack traces, and never a credential value or PII lifted from a log.
+
+### Filing tickets
+
+Ticket-filing normally lives in a step inside the `foreach`. For each new issue call `create_generator_task { plan_item_id: id, title, description, ... }`:
+- `title` — concise, per the step's title format.
+- `description` — carry the evidence the step specified (IDs, counts, affected areas, links, repro steps) so the downstream implementer has everything.
 - Optionally `acceptance_criteria` and `difficulty`.
 
-Each call creates one `ready` task linked back to this job (`plan_item_id`). These flow through the normal loop — a later heartbeat implements them, or a human triages.
+Each call creates one `ready` task linked back to this job. Dedup against `open_tasks` first — matching on title + gist — and skip anything already covered. That is what makes repeated runs safe.
+
+### When something fails
+
+| what failed | what to do |
+|---|---|
+| a **root** step | record it `failed`, **abort the remaining root steps**, and close the run with `failed` + `failed_step_id`. Steps never reached get no receipt — absence *is* "not reached". |
+| one **iteration** of a foreach | record that iteration `failed` and **continue the loop**. One bad item must not cost you the other nine tickets. |
+| the **source**, mid-run (expired OAuth, rate limit, revoked key) | treat as a root-step failure, and also `record_resource_check` with the real status, as in Step 1.5 §4. |
+
+Never prompt — `/fabrio:ops-heartbeat` dispatches this skill headlessly. Every exit is a durable artifact.
 
 ---
 
-## Step 5 — Record the run (advances the cadence)
+## Step 2.9 — Legacy prose mode
 
-Call **exactly once** at the end, even if zero tasks were filed:
-`record_generator_run { plan_item_id: id, items_found: <candidates considered>, tasks_created: <new tickets filed>, summary: "<one line: found X, filed Y, skipped Z dupes>" }`.
+A job with no `steps` still has hand-written `job_plan` prose. Follow it as written, end to end, in one pass. Still call `open_generator_run` (with no `steps_total`) and still close with `record_generator_run { run_id, … }` — you simply record no per-step receipts. Mention in your output that `/fabrio:plan-job {item_number}` would convert it to steps.
 
-This writes the run history the UI shows **and** advances `next_run_at` by the job's cadence. Do not call `queue_plan_item_task` for a generator — that path is for execution items only.
+---
+
+## Step 5 — Close the run (advances the cadence)
+
+Call **exactly once** at the end, even if zero tasks were filed and even if the run failed:
+
+`record_generator_run { plan_item_id: id, run_id, items_found: <candidates considered>, tasks_created: <new tickets filed>, status: "completed" | "failed", failed_step_id: <the step that stopped it, if any>, summary: "<one line: found X, filed Y, skipped Z dupes>" }`
+
+This closes the run row the UI shows **and** advances `next_run_at` by the job's cadence — on failure too, so the job retries next period instead of wedging. Do not call `queue_plan_item_task` for a generator — that path is for execution items only.
 
 ---
 
@@ -85,6 +137,7 @@ This writes the run history the UI shows **and** advances `next_run_at` by the j
 
 ```
 🔁 Generator run: "{item.title}"
+  Steps:             {completed}/{total}   {✓ | ✗ stopped at {path} — {title}}
   Candidates found:  {items_found}
   New tickets filed: {tasks_created}   (skipped {dupes} already-open)
   Next run:          {next_run_at}

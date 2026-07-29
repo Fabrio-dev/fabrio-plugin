@@ -45,6 +45,23 @@ Treat these as authoritative user context — they take precedence over generic 
 
 Read the site context (`plan.site.name`, `description` if present, `live_url`, `ai_context`) plus the objective (`plan.title`), `plan.goals`, `plan.target_audience`, and the reference documents. Decide **which departments the objective needs** and generate **6–12 initiatives spanning them**. Example — "Improve SEO" typically needs content (articles/copy), design (CWV, internal-linking UI), development (schema markup, sitemaps, performance), marketing (backlink outreach). Only include a department the objective genuinely needs.
 
+### An item is an INITIATIVE, not a STAGE
+
+Before you emit an item, ask: **would someone schedule this on its own, and would finishing it alone be worth something?** If it only makes sense as one phase of another item, it is **not an item** — it is a **step** of that item, and you must not emit it.
+
+**The pipeline test (hard rule).** If two or more candidate items form a chain where each one's only consumer is the next — *fetch → analyse → classify → dedupe → decide → file* — that whole chain is **ONE** item. Emit the single item (recurring, `kind: "generator"` if it files tickets), narrate the entire flow in its `description`, and do **not** emit the stages as siblings. `/fabrio:plan-job` later turns that description into the job's nested steps, including a `foreach` for the per-item work.
+
+**`depends_on` sequences independent initiatives; it is not a workflow arrow.** Valid: "Publish the pricing page" depends on "Ship the pricing API" — two deliverables, two owners, each worth doing. Invalid: "Classify severity" depends on "Investigate errors" — two stages of one job.
+
+**Never give a `generator` item a `depends_on`.** A generator performs its whole pipeline inside a single run, so a stage of that pipeline can never be a real prerequisite for it. (The server drops the edge anyway — it once produced a monitoring job displayed as *"blocked by: auto-create a ticket with the remediation plan"*, blocked by the very thing it does.)
+
+**Three signals you are about to make this mistake.** If any is true, collapse the chain into one item:
+1. A `depends_on` chain is longer than two links.
+2. Every link is `one_time` but the last link is recurring.
+3. The last item's `description` restates what the earlier items do.
+
+**Self-check before Step 4.** Read your item list back. For each recurring item, ask: *does any other item describe a stage of this one?* If so, delete that item and fold its detail into the recurring item's `description`. Then confirm no `depends_on` chain exceeds two links and no generator has one at all.
+
 Each initiative:
 - `department` — `development` | `design` | `marketing` | `content`
 - `title` (≤200 chars)
@@ -57,8 +74,8 @@ Each initiative:
   - `standard` — a typical feature: a few files, existing patterns, small additive migration at most. **Default.**
   - `heavy` — cross-cutting/architectural; new subsystems; schema redesign; ambiguous; security-sensitive.
 - `sort_order` — integer, ascending
-- `kind` — **optional**: `execution` (default) or `generator`. Use `generator` **only** for a recurring initiative that gathers work from a source and files a ticket per issue (e.g. "weekly bug triage → file a ticket per bug", "review churned users → outreach tasks") rather than being a single unit of work. A generator must be recurring (`frequency != one_time`). For a generator, make the **`description`** a clear, natural-language account of how the job gathers work — the source (API, ticket system, MCP, analytics) and how to pick items (e.g. "Each week, pull open bugs from the team's tracker, take the top 5 by severity, and file a ticket for each"). `/fabrio:plan-job` later compiles that description into the saved job plan (and may ask the human a clarifying question first).
-- `depends_on` — **optional** integer: the `sort_order` of a prerequisite item. Sequences cross-department work; auto-queue skips a dependent item until its prerequisite is `done`. Omit for independent items.
+- `kind` — **optional**: `execution` (default) or `generator`. Use `generator` **only** for a recurring initiative that gathers work from a source and files a ticket per issue (e.g. "weekly bug triage → file a ticket per bug", "review churned users → outreach tasks") rather than being a single unit of work. A generator must be recurring (`frequency != one_time`). For a generator, make the **`description`** a clear, natural-language account of the **whole** flow — the source (API, ticket system, MCP, analytics), how to pick items, and what it does per item (e.g. "Each week, pull open bugs from the team's tracker, take the top 5 by severity, and file a ticket for each"). `/fabrio:plan-job` later compiles that description into the job's nested step tree (and may ask the human a clarifying question first). **Its stages are steps of this one item — never sibling items.**
+- `depends_on` — **optional** integer: the `sort_order` of a prerequisite item. Sequences genuinely **independent** initiatives; auto-queue skips a dependent item until its prerequisite is `done`. Omit for independent items, and never set it on a `generator` (see the pipeline test above).
 - `site_id` — **optional**: a sibling site's `id` (from Step 2's `list_sites`) when this initiative belongs to a **different** codebase than the plan's site — e.g. a marketing item for the public site while the plan is on the app. Omit to inherit the plan's site (the common case). The queued task is created against this site's repo, so cross-site sequencing works (e.g. a public-site page that `depends_on` an app feature).
 
 **Category suggestions** (hints): marketing → seo, social, email, content, paid · development → feature, refactor, infra, bugfix, performance · design → visual, ux, design-system, branding · content → blog, landing, docs, email, social.
@@ -102,4 +119,4 @@ Record 0–3 generalizable learnings (same rules as feature-request Step 11.5: r
 Review and queue tasks at /plans/{plan.id}. To evolve the plan later, run /fabrio:revise-plan {plan_number}.
 ```
 
-If any initiative was created as a **generator** (`kind: "generator"`), tell the user it needs a job plan before it can run: `/fabrio:plan-job {item_number}` (the job's `#N`, shown on the job in the plan UI).
+If any initiative was created as a **generator** (`kind: "generator"`), tell the user it needs its steps authored before it can run: `/fabrio:plan-job {item_number}` (the job's `#N`, shown on the job in the plan UI).

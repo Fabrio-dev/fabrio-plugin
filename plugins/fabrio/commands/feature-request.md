@@ -4,7 +4,9 @@ description: "Implements feature request tasks end-to-end — single task or all
 
 # Feature Request
 
-Implement `type='feature_request'` tasks from the Fabrio task system end-to-end.
+Implement `execution_mode='repo'` tasks from the Fabrio task system end-to-end — any task, in any department, whose deliverable is files in a site repo.
+
+> For non-repo work (a deliverable with no repo home, or an action on an outside system) use **`/fabrio:execute-task`**, which also classifies unclassified tasks and routes repo ones back here.
 
 - `/fabrio:feature-request 42` — implement one task by number.
 - `/fabrio:feature-request` — implement ALL available tasks (batch).
@@ -50,7 +52,7 @@ Task history: use `log_task_history` for semantic milestones. Routine field edit
 
 **Single-task mode** (argument given): extract the number, go to Step 2 for that task.
 
-**Batch mode** (no argument): fetch all workable code tasks with `list_tasks` — `{ type: "feature_request", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }`. Only `feature_request` is implemented here; `marketing`/content tasks are tracked but not auto-implemented. If none, output "No tasks are currently available to work on." and stop. Otherwise list them, then run **Steps 2–12 for each in order**, returning here after each.
+**Batch mode** (no argument): fetch all workable repo tasks with `list_tasks` — `{ execution_mode: "repo", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }`. This skill implements **repo work** — anything whose deliverable is files in a site repo, whatever department owns it (a marketing landing page and a content blog post both qualify). Tasks in `artifact`/`external` mode produce a deliverable instead and belong to `/fabrio:execute-task`; a task with **no mode set** hasn't been classified yet, so it also goes through `/fabrio:execute-task` first. If none, output "No tasks are currently available to work on." and stop. Otherwise list them, then run **Steps 2–12 for each in order**, returning here after each.
 
 > **Model routing note:** batch mode runs every task in the current session's model — it does not switch per task. Tier-aware routing is `/fabrio:ops-heartbeat`'s job (it dispatches each task as its own headless `/fabrio:feature-request {n}` on the resolved model). Step 5.5 still classifies unset tiers so those runs route correctly.
 
@@ -67,11 +69,16 @@ Call `get_task` with `{ task_number }`. It returns the task plus `site` (id, nam
 
 ---
 
-## Step 3 — Validate Type & Status
+## Step 3 — Validate Mode & Status
 
-**Type guard:** only `type='feature_request'` is implemented. If `task.type == 'marketing'`, log and skip (batch) / stop (single):
-`log_task_history { task_id, action: "skill_skipped", notes: "Not implemented by feature-request: type is marketing (tracked, not auto-implemented)." }`
-Output `⏭  Task #{task_number} is a marketing/content task — tracked, not auto-implemented.`
+**Mode guard:** this skill implements `execution_mode='repo'` only — the branch/build/PR pipeline. Department is irrelevant here: a `content` or `marketing` task whose deliverable is files in the repo is implemented exactly like a `development` one.
+
+If `task.execution_mode` is **`artifact`** or **`external`**, log and skip (batch) / stop (single):
+`log_task_history { task_id, action: "skill_skipped", notes: "Not implemented by feature-request: execution_mode is {mode} (produces a deliverable, not a PR)." }`
+Output `⏭  Task #{task_number} is an {mode} task — run /fabrio:execute-task {task_number} instead.`
+
+If `task.execution_mode` is **null** (never classified), do the same but point at the classifier:
+Output `⏭  Task #{task_number} has no execution_mode yet — run /fabrio:execute-task {task_number}, which classifies it and routes back here if it's repo work.`
 
 **Status:** allowed = `ready`, `changes_needed`, and `in_progress` (only to resume a run interrupted mid-implementation — see Step 7). Anything else → `log_task_history` with `skill_skipped` (batch, continue) or `skill_blocked` (single, stop), note `status was "{task.status}", required "ready" or "changes_needed"`; in single mode output the error and stop.
 
@@ -197,7 +204,7 @@ git fetch origin && git checkout "$BR" && git pull origin "$BR"
 
 ## Step 8 — Implement
 
-> Plan generation/revision live in `/fabrio:generate-plan` and `/fabrio:revise-plan`, not here — this skill only writes code (enforced by the Step 3 type guard).
+> Plan generation/revision live in `/fabrio:generate-plan` and `/fabrio:revise-plan`, not here — this skill only changes files in a repo (enforced by the Step 3 mode guard).
 
 Follow the plan. Read adjacent files and match existing patterns exactly. For DB changes: new numbered migration in `supabase/migrations/` + update `supabase/schema.sql`. Type-check with `npx tsc --noEmit` while developing; commit logical units (`npm run build` is the Step 9 gate).
 
@@ -223,7 +230,7 @@ git push -u origin feature/task-{task_number}-{short-slug}
 gh pr create --base "$BASE_BRANCH" --title "Task #{task_number}: {task.title}" --body "$(cat <<'PRBODY'
 ## Task #{task_number} — {task.title}
 
-**Type:** {task.type}  **Site:** {task.site_name}
+**Department:** {task.department}  **Site:** {task.site_name}
 
 ### Summary
 {task.feature_summary}

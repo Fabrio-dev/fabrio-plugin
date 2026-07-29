@@ -22,7 +22,9 @@ Call `get_plan { plan_number, include_items: true, include_attachments: true }`.
 
 ---
 
-## Step 2 — Load Learnings & Sibling Sites
+## Step 2 — Load Departments, Learnings & Sibling Sites
+
+Call `list_departments` first — it returns each department's `slug`, `description` and `playbook`. Use the slugs as the valid set for `department` (never hardcode them) and let each `description` guide which items belong where. A department's `playbook`, when present, is how that department actually works here — respect it when shaping its initiatives.
 
 Call `list_learnings { site_id: plan.site_id, include_portfolio: true, statuses: ["active"], limit: 20 }` (all departments — the objective spans several). Apply `preference`/`process` learnings to the plan's direction; treat `pitfall`/`review_feedback` as things to avoid. When generating an item for a department, weight that department's learnings most.
 
@@ -63,7 +65,7 @@ Before you emit an item, ask: **would someone schedule this on its own, and woul
 **Self-check before Step 4.** Read your item list back. For each recurring item, ask: *does any other item describe a stage of this one?* If so, delete that item and fold its detail into the recurring item's `description`. Then confirm no `depends_on` chain exceeds two links and no generator has one at all.
 
 Each initiative:
-- `department` — `development` | `design` | `marketing` | `content`
+- `department` — the owning department's `slug`, from `list_departments` (call it rather than assuming the set; also read each `description` to place items well). Today: `development` | `design` | `marketing` | `content`.
 - `title` (≤200 chars)
 - `description` (one or two sentences of actionable detail)
 - `category` (free-form lowercase slug — see suggestions)
@@ -73,6 +75,12 @@ Each initiative:
   - `light` — single-file / copy / config / content; mechanical; no schema changes. Most `marketing`/`content`.
   - `standard` — a typical feature: a few files, existing patterns, small additive migration at most. **Default.**
   - `heavy` — cross-cutting/architectural; new subsystems; schema redesign; ambiguous; security-sensitive.
+- `execution_mode` — **how the finished thing lands.** Independent of `department`; set it whenever you can tell, and omit only when genuinely unclear (the executor then classifies it on the first run):
+  - `repo` — the deliverable is files in a site repo, so it ships as a branch + PR. A blog post in `content/posts/`, landing copy, SEO metadata, an email template, any code or design change. **Prefer this when a repo could hold it** — it inherits review, history and deploy for free.
+  - `artifact` — a document with no repo home, useful on its own: a keyword/topic backlog, a content calendar, an ad-copy set, a competitive brief, a monthly report, an outreach target list.
+  - `external` — the work *is* an action on a third-party system: publishing to a social channel, sending a campaign, launching or adjusting paid ads, contacting people. Fabrio prepares a ready-to-execute package; **a human always performs the action.**
+
+  Do **not** infer it from the department: a `marketing` item can be `repo` (a landing page) and a `development` item can be `artifact` (an architecture proposal). Think about where the output lives, not who owns it.
 - `sort_order` — integer, ascending
 - `kind` — **optional**: `execution` (default) or `generator`. Use `generator` **only** for a recurring initiative that gathers work from a source and files a ticket per issue (e.g. "weekly bug triage → file a ticket per bug", "review churned users → outreach tasks") rather than being a single unit of work. A generator must be recurring (`frequency != one_time`). For a generator, make the **`description`** a clear, natural-language account of the **whole** flow — the source (API, ticket system, MCP, analytics), how to pick items, and what it does per item (e.g. "Each week, pull open bugs from the team's tracker, take the top 5 by severity, and file a ticket for each"). `/fabrio:plan-job` later compiles that description into the job's nested step tree (and may ask the human a clarifying question first). **Its stages are steps of this one item — never sibling items.**
 - `depends_on` — **optional** integer: the `sort_order` of a prerequisite item. Sequences genuinely **independent** initiatives; auto-queue skips a dependent item until its prerequisite is `done`. Omit for independent items, and never set it on a `generator` (see the pipeline test above).
@@ -90,8 +98,10 @@ Call `replace_plan_items { plan_id: plan.id, items: [ … ], change_summary: "In
 replace_plan_items {
   plan_id: "{plan.id}",
   items: [
-    { department: "content",     title: "…", description: "…", category: "blog", frequency: "monthly",  priority: "high",   difficulty: "light",    sort_order: 0 },
-    { department: "development", title: "…", description: "…", category: "infra", frequency: "one_time", priority: "medium", difficulty: "standard", sort_order: 1 }
+    { department: "content",     title: "…", description: "…", category: "blog",   frequency: "monthly",  priority: "high",   difficulty: "light",    execution_mode: "repo",     sort_order: 0 },
+    { department: "development", title: "…", description: "…", category: "infra",  frequency: "one_time", priority: "medium", difficulty: "standard", execution_mode: "repo",     sort_order: 1 },
+    { department: "marketing",   title: "…", description: "…", category: "social", frequency: "weekly",   priority: "medium", difficulty: "light",    execution_mode: "external", sort_order: 2 },
+    { department: "content",     title: "…", description: "…", category: "seo",    frequency: "one_time", priority: "high",   difficulty: "standard", execution_mode: "artifact", sort_order: 3 }
   ],
   change_summary: "Initial generation"
 }
@@ -111,12 +121,14 @@ Record 0–3 generalizable learnings (same rules as feature-request Step 11.5: r
 ✅ Plan generated: "{plan.title}" for {plan.site.name}
 
 {N} initiatives across {D} departments (accepted as revision #1):
-• [content]     {title} — {frequency}
-• [design]      {title} — {frequency}
-• [development] {title} — {frequency}
+• [content]     {title} — {frequency} · {execution_mode}
+• [design]      {title} — {frequency} · {execution_mode}
+• [development] {title} — {frequency} · {execution_mode}
 ...
 
 Review and queue tasks at /plans/{plan.id}. To evolve the plan later, run /fabrio:revise-plan {plan_number}.
 ```
 
 If any initiative was created as a **generator** (`kind: "generator"`), tell the user it needs its steps authored before it can run: `/fabrio:plan-job {item_number}` (the job's `#N`, shown on the job in the plan UI).
+
+If any initiative is `execution_mode: "external"`, say so plainly — Fabrio will prepare a ready-to-execute package for each, but **the human performs the action**; those items never publish, send or spend on their own.

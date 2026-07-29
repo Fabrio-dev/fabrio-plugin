@@ -31,7 +31,9 @@ Use `plan.latest_accepted_revision.created_at` (from Step 1) as the cutoff. Fetc
 
 ---
 
-## Step 3 — Load Learnings & Sibling Sites
+## Step 3 — Load Departments, Learnings & Sibling Sites
+
+`list_departments` — the valid `department` slugs plus each one's `description` and `playbook`. Never hardcode the slug set; a department added later should be usable without editing this skill.
 
 `list_learnings { site_id: plan.site_id, include_portfolio: true, statuses: ["active"], limit: 20 }`.
 
@@ -47,7 +49,9 @@ Design an updated plan (goals + full item list) across all the departments the o
 - **Add** new initiatives informed by what shipped, the goals, and the learnings — including in departments not yet represented if the objective now needs them.
 - **Reprioritize** based on cross-department bottlenecks, what struggled, or what learnings flag as high-value.
 
-The item list is the COMPLETE proposed set (it replaces the current items if accepted), each with `department`, `title`, `description`, `category`, `frequency`, `priority`, `difficulty`, `sort_order`, optional `depends_on` (the `sort_order` of a prerequisite item; auto-queue skips a dependent item until its prerequisite is `done`), optional `site_id` (a sibling site's id when the item belongs to a different codebase than the plan's site — carry existing overrides forward), and optional `kind`. Write a concise `change_summary` (what the human sees first).
+The item list is the COMPLETE proposed set (it replaces the current items if accepted), each with `department`, `title`, `description`, `category`, `frequency`, `priority`, `difficulty`, `execution_mode`, `sort_order`, optional `depends_on` (the `sort_order` of a prerequisite item; auto-queue skips a dependent item until its prerequisite is `done`), optional `site_id` (a sibling site's id when the item belongs to a different codebase than the plan's site — carry existing overrides forward), and optional `kind`. Write a concise `change_summary` (what the human sees first).
+
+**`execution_mode` — how each item's deliverable lands** (`repo` = files in a site repo → branch + PR · `artifact` = a markdown document with no repo home · `external` = an action on a third-party system that a **human** performs from the package Fabrio prepares). Independent of `department`: a marketing item can be `repo` and a development item can be `artifact`. **Carry an existing item's mode forward** unless the work genuinely changed shape, and set one on every new item you can classify — omit only when truly unclear, and the executor decides on the first run. If a mode looks wrong given what actually happened (an item classified `external` that has been shipping PRs, say), correcting it is a legitimate revision — call it out in the `change_summary`.
 
 **Generator jobs:** carry an existing generator item forward with its `kind: "generator"`, its `description`, and — critically — **its `title` byte-for-byte**. Accepting a revision reconciles the snapshot against the live items **by title**: a matched item is updated in place and keeps its steps, run history, question threads, `#N` and spawned tickets, while a title that no longer matches is treated as a delete plus an insert, which loses all of it. Reword a job's `description` freely; rename its `title` only when you genuinely mean to replace the job.
 

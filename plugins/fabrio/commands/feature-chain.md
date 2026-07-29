@@ -4,7 +4,7 @@ description: "Implements a set of dependent feature tasks on one shared branch �
 
 # Feature Chain
 
-Implement **dependent** `type='feature_request'` tasks together: run them one-at-a-time on a **single shared branch** (each task builds on the previous task's commits), then open **one PR** covering the whole chain. This is for work that was split into several sequential tasks where you don't want to merge task 1 into the base branch just to start task 2 — build and test them together, check them in once.
+Implement **dependent** `execution_mode='repo'` tasks together: run them one-at-a-time on a **single shared branch** (each task builds on the previous task's commits), then open **one PR** covering the whole chain. This is for work that was split into several sequential tasks where you don't want to merge task 1 into the base branch just to start task 2 — build and test them together, check them in once.
 
 - `/fabrio:feature-chain 12 13 14 15` — **explicit chain.** The order you give **is** the build order. All must be on the same site.
 - `/fabrio:feature-chain --site <site_id|name>` — **auto-group** the available tasks for one site into dependency chains and run each.
@@ -63,7 +63,7 @@ Produce an ordered list of **chains**, where each chain is an ordered list of ta
 The arguments are one chain, **in the order given** = the build order. `get_task` each one and confirm they share a `site_id`. If any belong to a different site, **stop**: `Error: chain tasks span multiple sites (#{a} → {siteA}, #{b} → {siteB}). A chain must be one repo. Run them as separate chains.` Do not reorder an explicit chain — the user's order is authoritative.
 
 ### Auto-group mode (`--site` or bare)
-Fetch workable tasks with `list_tasks { type: "feature_request", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }` (add `site_id` when `--site` is given; resolve a site **name** to its id via `list_sites` first). Only `feature_request` is implemented — `marketing`/content tasks are tracked but not auto-implemented. If none, output "No tasks are currently available to chain." and stop.
+Fetch workable tasks with `list_tasks { execution_mode: "repo", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }` (add `site_id` when `--site` is given; resolve a site **name** to its id via `list_sites` first). **Only `repo` tasks can be chained** — a chain *is* a shared git branch, so a deliverable or an external action has nothing to build on. Department doesn't matter: a marketing landing page and a content blog post chain like any other repo work. Non-repo and unclassified tasks belong to `/fabrio:execute-task`. If none, output "No tasks are currently available to chain." and stop.
 
 **Group per `site_id`, then within each site cluster tasks into chains.** Chain two tasks only when there's **real evidence** one builds on the other, in priority order:
 
@@ -157,7 +157,7 @@ git log {branch} --grep "^Task #{T.task_number}:" -1
 If a commit exists, T is already implemented on the chain → output `↩  #{T.task_number} already on the branch — skipping to next.` and continue to the next task. (`claim_task` returning `{ claimed:false, current_status:"in_progress" }` for **your own** interrupted run is expected and not a conflict.)
 
 ### 3b — Fetch + validate
-`get_task { task_number: T.task_number }` → task + `site` + `questions` + `attachments`. Null → in a chain this breaks the build order; **hold the chain** (see Step 4) treating T as the blocker. Validate: `type == 'feature_request'` (else hold — a chain can't skip a non-code prerequisite) and `status ∈ { ready, changes_needed, in_progress }` (`in_progress` only to resume). Note `task.department` (scopes learnings) and `site.ai_context`.
+`get_task { task_number: T.task_number }` → task + `site` + `questions` + `attachments`. Null → in a chain this breaks the build order; **hold the chain** (see Step 4) treating T as the blocker. Validate: `execution_mode == 'repo'` (else hold — a chain can't skip a prerequisite it has no way to build, and an unclassified task must go through `/fabrio:execute-task` first) and `status ∈ { ready, changes_needed, in_progress }` (`in_progress` only to resume). Note `task.department` (scopes learnings) and `site.ai_context`.
 
 ### 3c — Open questions → HOLD
 If any `T.questions` has `status='open'`, the chain **holds at T** — go to Step 4. Everything after T depends on it, so don't attempt later tasks.

@@ -30,7 +30,9 @@ Call `get_plan_item { item_number }`. Capture:
 - `id` — the job's UUID; **use it as `plan_item_id` for every write tool below** (update_plan_item, create_task_question, create_decision links).
 - `description` — the human intent. **If empty, stop** and tell the user to add a description to the job first (e.g. "Each week, pull open bugs from our Jira project ABC, take the top 5 by severity, and file a ticket for each").
 - `is_blocked` / existing questions — see Step 2.
-- `kind` (`execution` | `generator`), `frequency`, `department`, and site context (`plan.site.name`, `live_url`, `ai_context`).
+- `kind` (`execution` | `generator`), `frequency`, `department`, `execution_mode`, and site context (`plan.site.name`, `live_url`, `ai_context`).
+
+**`execution_mode` shapes the whole procedure**, so settle it before writing steps (Step 3.5). A `repo` job ends in a branch + PR; an `artifact` job ends in a saved markdown deliverable; an `external` job ends in a ready-to-execute package a human performs. Writing repo/PR steps for a job that publishes to a social channel produces a plan that can never run.
 
 Then call `list_site_resources { site_id: plan.site_id }` — the third-party tools this site is wired to (monitoring today; analytics/hosting later). Each entry gives `provider`, `access_method`, the non-secret connection recipe, the per-site config (`service`, `env`, `project_slug`, `app_id`, …), `mcp_server_name`, and `credential_keys` — the **names** of keys a machine must have in `~/.fabrio/credentials.json`. Fabrio never stores the values. **This is your source list: prefer a real attached resource over asking a human.**
 
@@ -69,9 +71,25 @@ Then stop:
 
 ---
 
+## Step 3.5 — Settle the execution mode
+
+If `item.execution_mode` from Step 1 is already set, honour it. If it's null, decide from the `description` — **where does each run's output end up?**
+
+- **`repo`** — files in a site repo. A weekly blog post committed to `content/posts/`, a monthly dependency bump, generated sitemap entries. Steps end in a branch + PR.
+- **`artifact`** — a document with no repo home. A monthly performance report, a refreshed keyword backlog, a competitor scan. Steps end in a saved markdown deliverable.
+- **`external`** — an action on a third-party system. Posting to social, sending a campaign, adjusting ad spend, outreach. Steps end in a ready-to-execute package; **a human performs the action, always.**
+- A **generator** job (`kind: "generator"`) files tickets rather than producing the work itself, so its own mode describes *the tickets it files* — usually `repo` for a bug-triage job. The filed tickets inherit it.
+
+Persist it so queued tasks route correctly: `update_plan_item { plan_item_id: id, fields: { execution_mode: "{mode}" } }`. Say which mode you chose and why in the Step 6 summary.
+
+A job whose description mixes modes ("write the post **and** promote it on social") is two initiatives, not one — file a question rather than authoring a plan that ends in an action Fabrio may not take:
+`create_task_question { plan_item_id: id, content: "This job mixes producing content (a PR) with publishing it externally. Should I split it into two plan items?" }` and stop.
+
+---
+
 ## Step 4 — Design the step tree
 
-A job's procedure is an ordered, **nested** tree of steps, not one blob of prose. Draft that tree.
+A job's procedure is an ordered, **nested** tree of steps, not one blob of prose. Draft that tree. **Let the mode from Step 3.5 drive the closing steps** — a `repo` job ends in a PR, an `artifact` job in a saved deliverable, an `external` job in a prepared package. Never author a step that publishes, sends, or spends: those belong to the human.
 
 **What makes a step.** One step = one verb over one input. Nest a step **under** another when it must run *once per item* of that step's output — that is a `foreach`. Use a `branch` when a step only sometimes applies. Every leaf must be executable without re-reading the original description.
 
@@ -126,9 +144,10 @@ If `replace_job_steps` isn't available in this session, the connected Fabrio pre
 ## Step 6 — Output summary
 
 ```
-✅ Job procedure saved for "{item.title}" ({frequency} · {department})
+✅ Job procedure saved for "{item.title}" ({frequency} · {department} · {execution_mode})
 {N} steps{, including a foreach over {what}}
 Source: {how it fetches work — e.g. "Jira project ABC via MCP"}
+Output: {repo: "a PR per run" | artifact: "a markdown deliverable per run" | external: "a ready-to-execute package per run — you perform the action"}
 {Files up to {N} tickets/run, deduped against open ones. | Queues one task/run.}
 
 Run it now with /fabrio:run-generator {item_number} (generator) — or let the ops heartbeat run it on schedule.

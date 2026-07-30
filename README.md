@@ -1,8 +1,11 @@
-# Fabrio Plugin (Claude Code)
+# Fabrio Plugin (Claude Code + Codex)
 
-Adds Fabrio's workflow **slash commands** to Claude Code:
+Adds Fabrio's workflow commands to Claude Code and native skills to Codex:
 
 - `/fabrio:feature-request`, `/fabrio:ops-heartbeat`, `/fabrio:merge-task`, `/fabrio:generate-plan`, `/fabrio:revise-plan`, `/fabrio:consolidate-learnings`
+
+The full set also includes `configure`, `execute-task`, `feature-chain`, `plan-job`, and
+`run-generator`. In Codex, invoke the same workflows as `$fabrio:<name>` or in natural language.
 
 The commands read and write your Fabrio data through the **Fabrio MCP server**, which you connect once with a per-account API key. Installing the plugin gives you the commands; connecting the MCP gives them their data. Two quick steps:
 
@@ -30,6 +33,27 @@ claude mcp list        # → fabrio: connected
 ```
 
 The server is named `fabrio`, so its tools appear as `mcp__fabrio__*` — which is what the commands expect.
+
+## Codex installation
+
+Install the same public marketplace and plugin:
+
+```bash
+codex plugin marketplace add Fabrio-dev/fabrio-plugin
+codex plugin add fabrio@fabrio-dev
+```
+
+Keep the Fabrio key in the environment used to launch Codex, then register the MCP server:
+
+```bash
+export FABRIO_API_KEY="fab_live_YOUR_KEY"
+codex mcp add fabrio --url https://fabrio.dev/api/mcp \
+  --bearer-token-env-var FABRIO_API_KEY
+```
+
+Restart Codex, open a new task, and run `$fabrio:configure`. For recurring operations, create a
+Codex automation whose prompt is `Run $fabrio:ops-heartbeat`; plugin installation never starts
+unattended work by itself.
 
 ## Switching accounts
 
@@ -70,4 +94,4 @@ only less hands-off.
 
 ---
 
-*The command files here are generated from the Fabrio app repo (`.claude/commands/`) via its `scripts/sync-plugin.mjs`. Edit skills there, not here.*
+*The Claude commands and Codex skills here are generated from the Fabrio app repo (`.claude/commands/`) via its `scripts/sync-plugin.mjs`. Edit workflows there, not here.*

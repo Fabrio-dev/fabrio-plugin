@@ -1,0 +1,38 @@
+{
+  "name": "fabrio",
+  "version": "0.3.7",
+  "description": "Fabrio workflow skills for planning, executing, reviewing, and improving work across every department.",
+  "author": {
+    "name": "Fabrio",
+    "url": "https://fabrio.dev"
+  },
+  "homepage": "https://fabrio.dev",
+  "repository": "https://github.com/Fabrio-dev/fabrio-plugin",
+  "keywords": [
+    "fabrio",
+    "workflow",
+    "planning",
+    "tasks",
+    "operations"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Fabrio",
+    "shortDescription": "Run Fabrio planning and execution workflows",
+    "longDescription": "Plan, execute, review, merge, and continuously improve work from your Fabrio account using native Codex skills and the Fabrio MCP server.",
+    "developerName": "Fabrio",
+    "category": "Engineering",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://fabrio.dev",
+    "defaultPrompt": [
+      "Run the Fabrio ops heartbeat",
+      "Execute Fabrio task 42",
+      "Generate Fabrio plan 7"
+    ],
+    "brandColor": "#10B981"
+  }
+}

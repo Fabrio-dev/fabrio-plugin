@@ -1,0 +1,20 @@
+{
+  "name": "fabrio-dev",
+  "interface": {
+    "displayName": "Fabrio"
+  },
+  "plugins": [
+    {
+      "name": "fabrio",
+      "source": {
+        "source": "local",
+        "path": "./plugins/fabrio"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Engineering"
+    }
+  ]
+}

@@ -35,7 +35,7 @@ If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabr
 - If it returns `{ locked: true }`, stop: `⏸  An ops run is already in progress — skipping.`
 - Otherwise capture `run_id` and `weekly_due` (the server computes both the 2h lock and whether the weekly steps are due).
 
-Keep a tally: `items_queued, jobs_planned, generators_run, tasks_generated, tasks_implemented, prs_opened, revisions_proposed, learnings_consolidated, stale_flagged`, plus a per-tier `models_used` map (`{light,standard,heavy}`).
+Keep a tally: `items_queued, jobs_planned, jobs_run, tasks_implemented, prs_opened, revisions_proposed, learnings_consolidated, stale_flagged`, plus a per-tier `models_used` map (`{light,standard,heavy}`).
 
 **Load the tier → model mapping** with `get_model_tiers` (Step 2 dispatches each task on its tier's model).
 
@@ -45,17 +45,17 @@ Keep a tally: `items_queued, jobs_planned, generators_run, tasks_generated, task
 
 ## Step 1 — Run Due Recurring Jobs
 
-Call `list_due_plan_items` — it returns recurring jobs with `next_run_at <= now`, each already carrying `eligible` and (if not) `skip_reason`, with the plan-status, dependency, blocked, and job-plan gates **resolved server-side**. Each item carries `item_number`, `id`, `kind` (`execution` | `generator`), `is_blocked`, `job_plan`, and `description`.
+Call `list_due_plan_items` — it returns recurring jobs with `next_run_at <= now`, each already carrying `eligible` and (if not) `skip_reason`, with the plan-status, dependency, blocked, and job-plan gates **resolved server-side**. Each item carries `item_number`, `id`, `is_blocked`, `job_plan`, `description`, and `needs_replan`.
 
-For each item where `eligible === true`, branch on `kind`:
+For each item where `eligible === true`, there is **one path**: **dispatch `$fabrio:run-job {item.item_number}`** through Codex agent delegation (same machinery as Step 2 — run it from this directory so it inherits the `fabrio` connection; resolve the model from the item's `difficulty` tier). The skill walks the job's step tree, reads its sources, dedups against open tasks, files a task at each `create_task` step, records what each step did, and calls `record_generator_run` (which advances `next_run_at`). A failed run records which step stopped it, so the Runs tab shows where it got to. After it exits, increment `jobs_run` and add the run's `tasks_created` to `items_queued`.
 
-- **`execution`** (or missing) → call `queue_plan_item_task { item_id: item.id }`. The server creates a task for **each site the item targets** (one for a single-site item; one per site for a multi-site or all-sites plan, skipping sites already covered) **and** advances `next_run_at` in one call. It returns `tasks` (an array) — increment `items_queued` by `tasks.length`.
-- **`generator`** → **dispatch `$fabrio:run-generator {item.item_number}`** through Codex agent delegation (same machinery as Step 2 — run it from this directory so it inherits the `fabrio` connection; resolve the model from the item's `difficulty` tier). The skill walks the job's step tree, reads the source, dedups against open tickets, files N tasks, records what each step did, and calls `record_generator_run` (which advances `next_run_at`). A failed run records which step stopped it, so the Runs tab shows where it got to. After it exits, increment `generators_run` and add the run's `tasks_created` to `tasks_generated`. **Do not** also call `queue_plan_item_task` for a generator.
-  - Fallback: if delegated dispatch is unavailable, run `$fabrio:run-generator {item.item_number}` inline on the current model.
+- Fallback: if delegated dispatch is unavailable, run `$fabrio:run-job {item.item_number}` inline on the current model.
 
-**Auto-plan jobs that need a procedure.** For items where `skip_reason === "job plan not generated"` **and** `description` is non-empty, **dispatch `$fabrio:plan-job {item.item_number}`** through Codex agent delegation (same machinery). If `$fabrio:plan-job` can finish without input it authors the job's steps; if it needs a human it opens a blocking question (the job becomes `is_blocked`) — either way, don't run the job this cycle; the next heartbeat picks it up once it has a procedure and isn't blocked. Increment `jobs_planned`.
+**Never call `queue_plan_item_task` here.** A recurring job's tasks come from its steps. That tool is for one-off initiatives (queued from the plan UI) and for `$fabrio:run-job`'s own legacy fallback — which the skill handles itself, including the `advance_cadence: false` that keeps the cadence from double-advancing.
 
-Skip the rest where `eligible === false` — the `skip_reason` explains why: plan not active, prerequisite not done, **blocked on a question** (a human must answer in the job's Questions tab), a task already in flight for an execution job, or `job plan not generated` with no description yet (needs a human to describe the job).
+**Auto-plan jobs that need a procedure.** For items where `description` is non-empty **and** either `skip_reason === "job plan not generated"` **or** `needs_replan === true`, **dispatch `$fabrio:plan-job {item.item_number}`** through Codex agent delegation (same machinery). `needs_replan` means the job's steps predate the plan/execute split — they describe doing the work rather than filing a task, so `$fabrio:run-job` refuses to walk them and falls back to queueing. Replanning is what converts it. If `$fabrio:plan-job` can finish without input it authors the steps; if it needs a human it opens a blocking question (the job becomes `is_blocked`). Either way the job still ran (or was skipped) this cycle on its own terms — the next heartbeat picks up the new procedure. Increment `jobs_planned`.
+
+Skip the rest where `eligible === false` — the `skip_reason` explains why: plan not active, prerequisite not done, **blocked on a question** (a human must answer in the job's Questions tab), or `job plan not generated` with no description yet (needs a human to describe the job).
 
 `one_time` items are never returned here — those are queued from the plan UI.
 
@@ -140,16 +140,15 @@ Increment `stale_flagged`. Never merges, closes, or reopens anything.
 
 ## Step 5 — Finish
 
-Call `close_ops_run { run_id, status: "completed", summary: { items_queued, jobs_planned, generators_run, tasks_generated, tasks_implemented, prs_opened, deliverables_produced, awaiting_human_action, tasks_blocked, revisions_proposed, learnings_consolidated, stale_flagged, models_used: {light,standard,heavy} } }`.
+Call `close_ops_run { run_id, status: "completed", summary: { items_queued, jobs_planned, jobs_run, tasks_implemented, prs_opened, deliverables_produced, awaiting_human_action, tasks_blocked, revisions_proposed, learnings_consolidated, stale_flagged, models_used: {light,standard,heavy} } }`.
 
 `tasks_implemented` counts everything that reached `under_review` this run, whatever the mode; `prs_opened` and `deliverables_produced` split that total by how the work landed, so a cycle that shipped only content still reports real output instead of zeros. `awaiting_human_action` is the subset of `external` tasks now waiting on a person to perform them — call it out in the closing message, since those don't move without the human.
 
 Report:
 ```
 🩺 Ops heartbeat complete.
-  Recurring items queued:   {N}
-  Job plans generated:      {N}   ← jobs auto-planned this run
-  Generators run:           {N}   → {tasks_generated} tickets filed
+  Jobs run:                 {jobs_run}   → {items_queued} tasks filed
+  Job plans generated:      {N}   ← jobs auto-planned or replanned this run
   Tasks executed:           {N}   ({light} light · {standard} standard · {heavy} heavy)
     → PRs opened:           {N}
     → Deliverables written: {N}

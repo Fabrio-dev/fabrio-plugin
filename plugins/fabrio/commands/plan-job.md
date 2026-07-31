@@ -1,10 +1,12 @@
 ---
-description: "Turns a recurring job's description into a saved, reusable tree of steps it re-runs each cadence — asking blocking questions when it needs human input."
+description: "Turns a recurring job's description into a saved, reusable tree of steps it re-runs each cadence — steps that plan the work and file the task that does it, asking blocking questions when it needs human input."
 ---
 
 # Plan Job
 
 Every recurring **job** has a human `description` (what it does / how it gathers work) and a required, AI-authored **procedure** — an ordered, nested tree of **steps** it re-runs each cadence. This skill compiles the description into those steps. It mirrors how a task has a human `description` + an AI `task_plan`, and — like `/fabrio:feature-request` — it can **ask a blocking question** and wait for a human when a real choice is needed.
+
+**A job plans; a task does.** The steps you author read sources and decide what needs doing, then file a task — they never produce the work themselves. Step 3.4 states that contract in full, and it is the single most important thing on this page.
 
 Steps replaced the old single `job_plan` text blob so that a job's stages have somewhere to live. Before, they had nowhere to go — so plans emitted them as sibling initiatives instead, and a job could end up "blocked by" a stage of its own procedure. `job_plan` still exists, but it is now *generated* from the steps.
 
@@ -30,9 +32,11 @@ Call `get_plan_item { item_number }`. Capture:
 - `id` — the job's UUID; **use it as `plan_item_id` for every write tool below** (update_plan_item, create_task_question, create_decision links).
 - `description` — the human intent. **If empty, stop** and tell the user to add a description to the job first (e.g. "Each week, pull open bugs from our Jira project ABC, take the top 5 by severity, and file a ticket for each").
 - `is_blocked` / existing questions — see Step 2.
-- `kind` (`execution` | `generator`), `frequency`, `department`, `execution_mode`, and site context (`plan.site.name`, `live_url`, `ai_context`).
+- `frequency` — **if `one_time`, stop**: that's a one-off initiative, not a recurring job. It queues its task straight from the plan UI and needs no procedure.
+- `department`, `execution_mode`, and site context (`plan.site.name`, `live_url`, `ai_context`).
+- The plan's **site set** (`plan.all_sites`, `plan.plan_sites`) and the job's own `site_id` override. A multi-site plan fans each filed task out to every targeted site — don't hardcode one site into the steps.
 
-**`execution_mode` shapes the whole procedure**, so settle it before writing steps (Step 3.5). A `repo` job ends in a branch + PR; an `artifact` job ends in a saved markdown deliverable; an `external` job ends in a ready-to-execute package a human performs. Writing repo/PR steps for a job that publishes to a social channel produces a plan that can never run.
+**`execution_mode` describes the TASKS this job files, not the job's own steps** — settle it before writing them (Step 3.5). It never changes how the tree ends: every tree ends in a `create_task` step.
 
 Then call `list_site_resources { site_id: plan.site_id }` — the third-party tools this site is wired to (monitoring today; analytics/hosting later). Each entry gives `provider`, `access_method`, the non-secret connection recipe, the per-site config (`service`, `env`, `project_slug`, `app_id`, …), `mcp_server_name`, and `credential_keys` — the **names** of keys a machine must have in `~/.fabrio/credentials.json`. Fabrio never stores the values. **This is your source list: prefer a real attached resource over asking a human.**
 
@@ -71,16 +75,35 @@ Then stop:
 
 ---
 
+## Step 3.4 — The contract: steps plan, tasks do
+
+**A job's step tree is PLANNING ONLY.** A run's permitted side effects are exactly three:
+
+1. **read** a source, 2. **create a task**, 3. **record a receipt** (the runner does this itself).
+
+It never edits a repo, writes a deliverable, publishes, sends, or spends. Every unit of work product is produced inside a task, by `/fabrio:execute-task`.
+
+If the description says *"write and publish the weekly blog post"*, the tree **does not write it**. The tree decides *which* post, gathers what the writer needs, and files a task whose description contains all of it. The task writes the post and opens the PR.
+
+**Never author a step that:** checks out a branch, edits or commits a file, opens a PR, writes a deliverable, publishes, posts, sends, or spends. If you catch yourself writing one, it belongs in the `create_task` step's `instructions` as part of the task spec — not as a step of its own.
+
+**Receipts and cadence are not "work."** This rule is about work product, not bookkeeping — the runner records every run and advances `next_run_at` on its own. Never add steps for that.
+
+**A run that creates zero tasks is a successful run.** If the source is empty, or everything is already covered by an open task, the job records `0 items` and stops. **Never invent work to satisfy a rule.**
+
+---
+
 ## Step 3.5 — Settle the execution mode
 
-If `item.execution_mode` from Step 1 is already set, honour it. If it's null, decide from the `description` — **where does each run's output end up?**
+`execution_mode` describes **the tasks this job files** — not the job's own steps, which always end at `create_task`. The filed tasks inherit it.
 
-- **`repo`** — files in a site repo. A weekly blog post committed to `content/posts/`, a monthly dependency bump, generated sitemap entries. Steps end in a branch + PR.
-- **`artifact`** — a document with no repo home. A monthly performance report, a refreshed keyword backlog, a competitor scan. Steps end in a saved markdown deliverable.
-- **`external`** — an action on a third-party system. Posting to social, sending a campaign, adjusting ad spend, outreach. Steps end in a ready-to-execute package; **a human performs the action, always.**
-- A **generator** job (`kind: "generator"`) files tickets rather than producing the work itself, so its own mode describes *the tickets it files* — usually `repo` for a bug-triage job. The filed tickets inherit it.
+If `item.execution_mode` from Step 1 is already set, honour it. If it's null, decide from the `description` — **where does the output of each filed task end up?**
 
-Persist it so queued tasks route correctly: `update_plan_item { plan_item_id: id, fields: { execution_mode: "{mode}" } }`. Say which mode you chose and why in the Step 6 summary.
+- **`repo`** — the filed task ships files in a site repo (branch → PR). A weekly blog post committed to `content/posts/`, a monthly dependency bump, generated sitemap entries. *The job itself never touches the repo.*
+- **`artifact`** — the filed task produces a document with no repo home: a monthly performance report, a refreshed keyword backlog, a competitor scan. Saved as markdown on the task.
+- **`external`** — the filed task prepares an action on a third-party system: posting to social, sending a campaign, adjusting ad spend, outreach. It produces a ready-to-execute package; **a human performs the action, always.**
+
+Persist it so filed tasks route correctly: `update_plan_item { plan_item_id: id, fields: { execution_mode: "{mode}" } }`. Say which mode you chose and why in the Step 6 summary.
 
 A job whose description mixes modes ("write the post **and** promote it on social") is two initiatives, not one — file a question rather than authoring a plan that ends in an action Fabrio may not take:
 `create_task_question { plan_item_id: id, content: "This job mixes producing content (a PR) with publishing it externally. Should I split it into two plan items?" }` and stop.
@@ -89,14 +112,19 @@ A job whose description mixes modes ("write the post **and** promote it on socia
 
 ## Step 4 — Design the step tree
 
-A job's procedure is an ordered, **nested** tree of steps, not one blob of prose. Draft that tree. **Let the mode from Step 3.5 drive the closing steps** — a `repo` job ends in a PR, an `artifact` job in a saved deliverable, an `external` job in a prepared package. Never author a step that publishes, sends, or spends: those belong to the human.
+A job's procedure is an ordered, **nested** tree of steps, not one blob of prose. Draft that tree.
+
+**Every tree ends in one or more `create_task` steps. Nothing else in the tree changes anything.** The mode from Step 3.5 shapes what you write *inside* that step's `instructions` — it never adds a "commit it" or "publish it" step, because those belong to the task (Step 3.4).
 
 **What makes a step.** One step = one verb over one input. Nest a step **under** another when it must run *once per item* of that step's output — that is a `foreach`. Use a `branch` when a step only sometimes applies. Every leaf must be executable without re-reading the original description.
 
 **Step types**
-- `action` (default) — do one thing.
+- `action` (default) — read, filter, decide one thing.
 - `foreach` — repeat its `children` once per item of `foreach_source` (`"step:<output_key>"`, or omit to iterate the immediately preceding step's output). Set `max_iterations` to cap a run; the runner defaults to 10.
 - `branch` — run its `children` only when `condition` holds.
+- `create_task` — **the handoff.** Files one task from the current context. Put it **inside the `foreach`** when the job files one task per item found; put it **at the root** when the job files one task per run. Its `instructions` are the **task spec**: title format, everything the executor needs in the description, what "done" looks like, and difficulty if it varies. It must be a **leaf** — never nest steps under it.
+
+`replace_job_steps` **rejects** a tree with no `create_task` step, and rejects a `create_task` step that has children.
 
 Give a step an `output_key` (snake_case) when a later step needs to name its result.
 
@@ -104,28 +132,38 @@ Give a step an `output_key` (snake_case) when a later step needs to name its res
 
 **Limits:** depth 3, 12 top-level steps, 60 total. If you need more, fold detail into `instructions` rather than adding levels.
 
-**Cover these concerns across the tree:**
-1. **Fetch** — how to pull candidate items from the source. When the source is an attached resource, **open that step's `instructions` with a machine-readable line** so `/fabrio:run-generator` can preflight it before doing any work:
+**Cover these four concerns across the tree.** They apply whether the job files ten tasks a run or one — only the *cardinality* differs, and that's decided by where you put the `create_task` step.
+
+1. **Gather** — how to read the source(s). When the source is an attached resource, **open that step's `instructions` with a machine-readable line** so `/fabrio:run-job` can preflight it before doing any work:
 
    `resource: <resource_id> (<provider> · <access_method> · mcp: <mcp_server_name>)`
 
-   Then spell out the concrete call — which MCP tool or HTTP endpoint, and the query/filter, scoped by the resource's per-site config (e.g. `service:{config.service} env:{config.env}` for Datadog, `project:{config.project_slug}` for Sentry). **Never inline a credential value** — name the `credential_keys` and let the runner read them from `~/.fabrio/credentials.json`. If the resource exists in Fabrio but nobody has connected it on a machine yet, still author the steps: `/fabrio:run-generator` preflights and fails cleanly with the setup command rather than half-running.
-2. **Select & rank** — how to cluster/rank and how many to file per run (a top-N cap).
-3. **Dedup** — skip issues that already have an open ticket from this job (`/fabrio:run-generator` gets `open_tasks` from `get_plan_item`). Make this its own step *before* the loop that files tickets.
-4. **Shape each ticket** — title format + what evidence goes in the description (IDs, counts, links, repro). This is normally a step inside the `foreach`.
+   Then spell out the concrete call — which MCP tool or HTTP endpoint, and the query/filter, scoped by the resource's per-site config (e.g. `service:{config.service} env:{config.env}` for Datadog, `project:{config.project_slug}` for Sentry). **Never inline a credential value** — name the `credential_keys` and let the runner read them from `~/.fabrio/credentials.json`. If the resource exists in Fabrio but nobody has connected it on a machine yet, still author the steps: `/fabrio:run-job` preflights and fails cleanly with the setup command rather than half-running.
+2. **Narrow** — validate, normalize, filter, rank. May end at many (cap with a top-N), at exactly one, or at **zero** — zero is a legal, successful outcome.
+3. **Dedup** — drop anything already covered by an open task from this job (`/fabrio:run-job` gets `open_tasks` from `get_plan_item`). Its own step, **before** the `create_task` step. This applies to single-output jobs too: a weekly-blog job dedups its chosen topic against posts already queued or published.
+4. **Create the task(s)** — the `create_task` step. Everything the executor needs goes in its `instructions`; the executor **must never have to re-derive what the job already read**, because it cannot see the job's steps.
 
 Do **not** add a "record the run" step — the runner records every run itself.
 
-**Shape to aim for:**
+**Fan-out shape** (many tasks per run — bug triage, content audits):
 ```
-1. Preflight the monitoring resource                        action   → resource
-2. Fetch and cluster errors for the window                  action   → clusters
-3. Filter known noise                                       action   → candidates
-4. Rank and cap to the top 3                                action   → selected
-5. For each selected issue                foreach (step:selected, max 3)
-   5.1 Investigate the codebase for the fault               action
-   5.2 File a ticket with the remediation plan              action
+1. Preflight the monitoring resource                    action        → resource
+2. Fetch and cluster errors for the window              action        → clusters
+3. Filter known noise                                   action        → candidates
+4. Rank and cap to the top 3                            action        → selected
+5. For each selected issue             foreach (step:selected, max 3)
+   5.1 Investigate the codebase for the fault           action
+   5.2 File a task with the remediation plan            create_task
 ```
+
+**Single-output shape** (one task per run — a weekly post, a monthly report):
+```
+1. Fetch the next backlog topic                         action        → topic
+2. Validate and normalize the topic                     action        → prepared_topic
+3. Dedup against already-published and queued posts     action        → is_new
+4. Create a task to write the post                      create_task
+```
+Step 4's `instructions` carry the whole brief — the slug, the category, the frontmatter schema, the target keyword, which internal links to use, the site's voice notes, and the acceptance criteria. **The task writes the post, commits it, and opens the PR. The job does none of that** — there is no step 5.
 
 ---
 
@@ -133,7 +171,9 @@ Do **not** add a "record the run" step — the runner records every run itself.
 
 Call `replace_job_steps { plan_item_id: id, steps: [ … ] }` (use the `id` from Step 1). It replaces the job's whole tree, so send every step each time.
 
-For a ticket-filing job also call `update_plan_item { plan_item_id: id, fields: { kind: "generator" } }` if it isn't one already. A simple recurring task that just needs a documented procedure keeps `kind: "execution"` — it still benefits from steps.
+If it **rejects** the tree, the message says exactly what to fix. The two rules that catch a tree authored the old way:
+- *"A job's steps plan work; they never do it"* — you never reached a `create_task` step. Find the step that produces the output (writes the file, drafts the copy) and turn it into the task spec.
+- *"create_task step … has children"* — you nested the work under the handoff. Fold those children into the step's `instructions`.
 
 **Do not write `job_plan`.** It is generated from the steps server-side, and `update_plan_item` rejects the field once a job has any.
 
@@ -143,12 +183,14 @@ If `replace_job_steps` isn't available in this session, the connected Fabrio pre
 
 ## Step 6 — Output summary
 
+Derive the "files" line from where the `create_task` step sits: inside a `foreach` → up to N per run; at the root → one per run.
+
 ```
 ✅ Job procedure saved for "{item.title}" ({frequency} · {department} · {execution_mode})
 {N} steps{, including a foreach over {what}}
-Source: {how it fetches work — e.g. "Jira project ABC via MCP"}
-Output: {repo: "a PR per run" | artifact: "a markdown deliverable per run" | external: "a ready-to-execute package per run — you perform the action"}
-{Files up to {N} tickets/run, deduped against open ones. | Queues one task/run.}
+Source: {how it gathers work — e.g. "Jira project ABC via MCP"}
+Files:  {"up to {N} tasks/run, deduped against open ones" | "one task/run"}
+Each task {repo: "ships files in the repo and opens a PR" | artifact: "produces a markdown deliverable" | external: "prepares a package — you perform the action"}.
 
-Run it now with /fabrio:run-generator {item_number} (generator) — or let the ops heartbeat run it on schedule.
+Run it now with /fabrio:run-job {item_number} — or let the ops heartbeat run it on schedule.
 ```

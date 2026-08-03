@@ -166,7 +166,9 @@ Call **exactly once** at the end, even if zero tasks were filed and even if the 
 
 `record_generator_run { plan_item_id: id, run_id, items_found: <candidates considered>, tasks_created: <new tasks filed>, status: "completed" | "failed", failed_step_id: <the step that stopped it, if any>, summary: "<one line: found X, filed Y, skipped Z dupes>" }`
 
-This closes the run row the UI shows **and** advances `next_run_at` by the job's cadence — on failure too, so the job retries next period instead of wedging. **In plan mode never call `queue_plan_item_task`** — a job with a real procedure files its tasks from its `create_task` steps. That tool is for one-off initiatives and for legacy mode (Step 2.95), which is the only place `advance_cadence: false` belongs.
+This closes the run row the UI shows **and** sets `next_run_at`:
+- **completed** → advances by the job's normal cadence.
+- **failed** → schedules a **retry** instead of consuming the period: 1h, 2h, 4h, 8h … doubling per consecutive failure, capped at the job's own cadence. A failed run therefore never costs a full cycle, and a job broken for a real reason settles back to roughly its normal frequency rather than retrying forever. The result carries `consecutive_failures` — quote the retry time in your summary so the user knows when it comes back. **In plan mode never call `queue_plan_item_task`** — a job with a real procedure files its tasks from its `create_task` steps. That tool is for one-off initiatives and for legacy mode (Step 2.95), which is the only place `advance_cadence: false` belongs.
 
 ---
 
@@ -177,5 +179,5 @@ This closes the run row the UI shows **and** advances `next_run_at` by the job's
   Steps:             {completed}/{total}   {✓ | ✗ stopped at {path} — {title}}
   Candidates found:  {items_found}
   Tasks created:     {tasks_created}   (skipped {dupes} already-open)
-  Next run:          {next_run_at}
+  Next run:          {next_run_at}{on failure: "  ← retry #{consecutive_failures}"}
 ```

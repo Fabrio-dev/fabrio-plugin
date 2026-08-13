@@ -43,7 +43,9 @@ The server marks them `promoted` **and** rewrites the site's `## Learned Convent
 
 ### Portfolio-wide (`site_id` null, `occurrence_count >= 3`)
 
-Do **not** write these anywhere yet (department playbook writing lands in a later phase). List them in the final report as playbook candidates for the user to review.
+There is still no server-side promotion path for portfolio learnings, so do **not** write them anywhere. Split them in the final report so the user can act on each:
+- **Workspace-instruction candidates** — rules that hold for every site regardless of department (tooling, git provider, naming, company-wide policy). Their home is **Settings → AI instructions** (`accounts.ai_context`, 031).
+- **Playbook candidates** — craft conventions belonging to one department (department playbook writing lands in a later phase).
 
 ---
 
@@ -64,6 +66,10 @@ Learnings consolidation complete.
 
 Promoted into ai_context:
   • {site}: "{learning title}"
+  ...
+
+Workspace AI instruction candidates (paste into Settings → AI instructions):
+  • "{learning title}" (seen {N}×)
   ...
 
 Playbook candidates (portfolio-wide, review manually):

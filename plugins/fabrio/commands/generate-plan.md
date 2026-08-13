@@ -22,9 +22,11 @@ Call `get_plan { plan_number, include_items: true, include_attachments: true }`.
 
 ---
 
-## Step 2 — Load Departments, Learnings & Sibling Sites
+## Step 2 — Load Workspace Context, Departments, Learnings & Sibling Sites
 
-Call `list_departments` first — it returns each department's `slug`, `description` and `playbook`. Use the slugs as the valid set for `department` (never hardcode them) and let each `description` guide which items belong where. A department's `playbook`, when present, is how that department actually works here — respect it when shaping its initiatives.
+Call `get_account_context` first — the workspace's own `ai_context`: portfolio-wide rules (branch naming, company-wide code and content policy) that constrain every initiative you write, whatever site or department it lands on. Treat it as binding. It is the widest context layer; a department's `playbook` and a site's `ai_context` are narrower and win a direct conflict.
+
+Then call `list_departments` — it returns each department's `slug`, `description` and `playbook`. Use the slugs as the valid set for `department` (never hardcode them) and let each `description` guide which items belong where. A department's `playbook`, when present, is how that department actually works here — respect it when shaping its initiatives.
 
 Call `list_learnings { site_id: plan.site_id, include_portfolio: true, statuses: ["active"], limit: 20 }` (all departments — the objective spans several). Apply `preference`/`process` learnings to the plan's direction; treat `pitfall`/`review_feedback` as things to avoid. When generating an item for a department, weight that department's learnings most.
 
@@ -45,7 +47,7 @@ Treat these as authoritative user context — they take precedence over generic 
 
 ## Step 3 — Generate Initiatives
 
-Read the site context (`plan.site.name`, `description` if present, `live_url`, `ai_context`) plus the objective (`plan.title`), `plan.goals`, `plan.target_audience`, and the reference documents. Decide **which departments the objective needs** and generate **6–12 initiatives spanning them**. Example — "Improve SEO" typically needs content (articles/copy), design (CWV, internal-linking UI), development (schema markup, sitemaps, performance), marketing (backlink outreach). Only include a department the objective genuinely needs.
+Read the workspace instructions (from Step 2), then the site context (`plan.site.name`, `description` if present, `live_url`, `ai_context`) plus the objective (`plan.title`), `plan.goals`, `plan.target_audience`, and the reference documents. Decide **which departments the objective needs** and generate **6–12 initiatives spanning them**. Example — "Improve SEO" typically needs content (articles/copy), design (CWV, internal-linking UI), development (schema markup, sitemaps, performance), marketing (backlink outreach). Only include a department the objective genuinely needs.
 
 ### An item is an INITIATIVE, not a STAGE
 
@@ -112,7 +114,7 @@ replace_plan_items {
 
 ## Step 5 — Retrospective
 
-Record 0–3 generalizable learnings (same rules as feature-request Step 11.5: recording nothing is valid; no task recaps). Reflect: what about this site's positioning/audience or codebase wasn't in `ai_context`? Did generating this plan reveal a durable preference? Dedup against Step 2 — `reinforce_learning { learning_id }` rather than inserting a restatement. Each learning carries the department it concerns, scoped to the site: `record_learning { site_id: plan.site_id, department: "{department_it_concerns}", category, title, content }`.
+Record 0–3 generalizable learnings (same rules as feature-request Step 11.5: recording nothing is valid; no task recaps). Reflect: what about this site's positioning/audience or codebase wasn't in the workspace or site `ai_context`? Did generating this plan reveal a durable preference? Dedup against Step 2 — `reinforce_learning { learning_id }` rather than inserting a restatement. Each learning carries the department it concerns, scoped to the site: `record_learning { site_id: plan.site_id, department: "{department_it_concerns}", category, title, content }`.
 
 ---
 

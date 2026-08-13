@@ -28,7 +28,7 @@ All Fabrio data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` 
 
 ## Prerequisites
 
-**GitHub CLI** authenticated (`gh auth status`) — **only required for a task that has a PR.** Check it at Step 5, not up front: an `artifact`/`external` task never touches GitHub and must not be blocked on auth it doesn't use. When it is needed and missing, stop: `Error: GitHub CLI is not authenticated. Run: gh auth login`.
+**Workspace git provider** (031) — **only required for a task that has a PR.** Checked at Step 5, not up front: an `artifact`/`external` task never touches a git host and must not be blocked on config it doesn't use. When it is needed: if the workspace has no `git_provider` selected, or its CLI isn't authenticated, Step 5 stops with the exact remediation.
 
 If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabrio` MCP server isn't connected:
 
@@ -48,7 +48,7 @@ Extract the task number. If none: `Error: Task number required. Usage: $fabrio:m
 
 ## Step 2 — Fetch Task
 
-Call `get_task { task_number, include_history: true }`. If null: `Error: Task #{task_number} not found.` Store as `task`. Note `task.execution_mode`, `task.pr_number` and (for non-repo tasks) `task.deliverable`.
+Call `get_task { task_number, include_history: true }`. If null: `Error: Task #{task_number} not found.` Store as `task`. Note `task.execution_mode`, `task.pr_number`, `task.account.git_provider` (the workspace's resolved git provider — read at Step 5, only for tasks with a PR) and (for non-repo tasks) `task.deliverable`.
 
 **Resolve `source_root` only if `task.pr_number` is set** — a task with no PR has no local repo to touch, so skip this entirely rather than prompting for a path the run will never use. Full site path = `{source_root}/{task.site.relative_path}`. Resolve in this order (stop at the first that yields a value):
 1. The `FABRIO_SOURCE_ROOT` env var, if set (back-compat — power users may keep this).
@@ -85,25 +85,32 @@ Output: `Error: Task #{task_number} has an incomplete PR link (pr_url={...}, pr_
 
 ---
 
-## Step 5 — Check PR State on GitHub
+## Step 5 — Check PR State on the Git Provider
 
 *(repo tasks only)*
 
-```bash
-gh pr view {task.pr_number} --repo {owner/repo} --json state,mergeable,headRefName,url
-```
-Derive the repo from `task.pr_url` (e.g. `https://github.com/brandonturpin/FitPlan/pull/1` → `brandonturpin/FitPlan`).
+**Workspace git provider (031) — no default, ever.** `task.account.git_provider` (from Step 2). **If it is null, stop** — the workspace's provider setting was cleared since the PR was opened:
+> `Error: No git provider is selected for this workspace. Set it in Fabrio → Settings → AI instructions, then re-run $fabrio:merge-task {task_number}.`
 
-- `state == MERGED` → `Error: PR #{n} is already merged.` — log and stop.
-- `state == CLOSED` → `Error: PR #{n} is closed without merging.` — log and stop.
-- `mergeable == CONFLICTING` → `Error: PR #{n} has merge conflicts … Resolve conflicts, then re-run.` — log and stop.
+Otherwise run its `ops.auth_check`; on failure stop and print `git_provider.auth_hint` verbatim. Store the resolved provider as `PROVIDER` for the rest of this skill.
+
+```bash
+{PROVIDER.ops.view_pr}   # substitute {pr_number} and {repo}/{org}/{project}
+```
+Derive `{repo}`/`{org}`/`{project}` from `task.pr_url` per `PROVIDER.coordinates` (e.g. for GitHub, `https://github.com/brandonturpin/FitPlan/pull/1` → `repo = brandonturpin/FitPlan`).
+
+**Reading the response:** GitHub uses `state`/`mergeable`/`headRefName`; Azure DevOps uses `status`/`mergeStatus`/`sourceRefName` (no direct "conflicting" boolean — a non-completed PR with conflicts shows `mergeStatus: "conflicts"`).
+
+- Already merged (GitHub `state == MERGED`; Azure DevOps `status == completed`) → `Error: PR #{n} is already merged.` — log and stop.
+- Closed without merging (GitHub `state == CLOSED`; Azure DevOps `status == abandoned`) → `Error: PR #{n} is closed without merging.` — log and stop.
+- Has conflicts (GitHub `mergeable == CONFLICTING`; Azure DevOps `mergeStatus == conflicts`) → `Error: PR #{n} has merge conflicts … Resolve conflicts, then re-run.` — log and stop.
 
 ---
 
 ## Step 6 — Merge the PR
 
 ```bash
-gh pr merge {task.pr_number} --repo {owner/repo} --squash --delete-branch
+{PROVIDER.ops.merge_pr}   # substitute {pr_number} and {repo}/{org}/{project}
 ```
 If the merge fails, log and stop: `log_task_history { task_id: task.id, action: "error", notes: "Merge failed: {error message}" }`.
 
@@ -114,7 +121,7 @@ If the merge fails, log and stop: `log_task_history { task_id: task.id, action: 
 Never assume `main` — resolve the base branch from the repo:
 ```bash
 cd {site_path}
-BASE_BRANCH=$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')
+BASE_BRANCH=$({PROVIDER.ops.default_branch})   # Azure DevOps: strip the "refs/heads/" prefix
 git checkout "$BASE_BRANCH"
 git pull origin "$BASE_BRANCH"
 ```
@@ -174,8 +181,7 @@ This skill didn't produce the work, so its retrospective is about the **review c
 
    **Repo tasks** — read the PR comments:
    ```bash
-   gh api repos/{owner}/{repo}/issues/{task.pr_number}/comments \
-     --jq '[.[] | select(.user.type != "Bot")] | sort_by(.created_at) | .[] | .body'
+   {PROVIDER.ops.pr_comments}   # substitute {pr_number} and {repo}/{org}/{project}; flatten Azure DevOps' threads to one chronological list
    ```
    **Non-repo tasks** — the feedback is in Fabrio, not GitHub: read the `history` entries with `action: "review_feedback"` (written by the reviewer from the Deliverable tab), plus any human (`role: "human"`) messages in `task.questions[].messages`.
 

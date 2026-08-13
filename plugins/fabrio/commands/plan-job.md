@@ -33,7 +33,7 @@ Call `get_plan_item { item_number }`. Capture:
 - `description` — the human intent. **If empty, stop** and tell the user to add a description to the job first (e.g. "Each week, pull open bugs from our Jira project ABC, take the top 5 by severity, and file a ticket for each").
 - `is_blocked` / existing questions — see Step 2.
 - `frequency` — **if `one_time`, stop**: that's a one-off initiative, not a recurring job. It queues its task straight from the plan UI and needs no procedure.
-- `department`, `execution_mode`, and site context (`plan.site.name`, `live_url`, `ai_context`).
+- `department`, `execution_mode`, and site context (`plan.site.name`, `live_url`, `ai_context`). Then call `get_account_context` for the workspace's own `ai_context` — a job's steps hardcode provider and tool choices, so the portfolio-wide rules (which git host, which CMS, what may never be automated) are binding on the tree you write. It is the widest context layer; narrower layers (department playbook, site ai_context) win a direct conflict.
 - The plan's **site set** (`plan.all_sites`, `plan.plan_sites`) and the job's own `site_id` override. A multi-site plan fans each filed task out to every targeted site — don't hardcode one site into the steps.
 
 **`execution_mode` describes the TASKS this job files, not the job's own steps** — settle it before writing them (Step 3.5). It never changes how the tree ends: every tree ends in a `create_task` step.

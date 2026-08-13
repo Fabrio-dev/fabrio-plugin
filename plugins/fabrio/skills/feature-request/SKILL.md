@@ -30,10 +30,13 @@ All Fabrio data access goes through the **`fabrio` MCP server** (tools named `mc
 
 Run first; if any check fails, stop:
 
-```bash
-gh auth status                # GitHub CLI must be authed
-```
-- If `gh` isn't authed, stop and tell the user to `gh auth login`.
+**Workspace git provider — do this before anything else, no default, ever (031).** Call `get_account_context`. **If `git_provider` is null, stop the entire run** — batch mode too, this is a workspace config error, not a per-task one, and failing per task would print the same message N times. Do not claim a task, create a branch, or edit a file first. Print exactly:
+> `Error: No git provider is selected for this workspace. Set it in Fabrio → Settings → AI instructions, then re-run $fabrio:feature-request.`
+
+If `git_provider` is set, run its `ops.auth_check`. On failure, stop and print `git_provider.auth_hint` verbatim (e.g. `gh auth login`, or `az login && az extension add --name azure-devops`). **Never fall back to another provider, and never guess one from the git remote.**
+
+Store the resolved provider as `PROVIDER` — every `PROVIDER.ops.*` reference in the rest of this skill means "run that command, substituting placeholders." `{repo}`/`{org}`/`{project}` come from `PROVIDER.coordinates` applied to the current repo's git remote; for GitHub these are inferred automatically by `gh` from the working directory, so no explicit flags are needed there. `get_task` (Step 2) returns the same resolved provider as `task.account.git_provider` — it will match `PROVIDER`, already validated non-null here.
+
 - If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabrio` MCP server isn't connected:
   > Create a key in **Fabrio → Settings → API keys**, then run the **Connect command** shown there:
   > ```
@@ -50,7 +53,7 @@ Skip the prompt entirely if step 1 or 2 supplied a path.
 
 **Base branch** — never assume `main`; resolve at runtime from inside each target repo and use it for every checkout/pull/`--base`:
 ```bash
-BASE_BRANCH=$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')
+BASE_BRANCH=$({PROVIDER.ops.default_branch})   # Azure DevOps: strip the "refs/heads/" prefix
 ```
 
 Task history: use `log_task_history` for semantic milestones. Routine field edits (status, task_plan, pr_url, …) are logged automatically by `update_task`, so don't double-log those.
@@ -59,9 +62,11 @@ Task history: use `log_task_history` for semantic milestones. Routine field edit
 
 ## Step 1 — Determine Mode
 
-**Single-task mode** (argument given): extract the number, go to Step 2 for that task.
+**Single-task mode** (a number given): extract the number, go to Step 2 for that task.
 
-**Batch mode** (no argument): fetch all workable repo tasks with `list_tasks` — `{ execution_mode: "repo", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }`. This skill implements **repo work** — anything whose deliverable is files in a site repo, whatever department owns it (a marketing landing page and a content blog post both qualify). Tasks in `artifact`/`external` mode produce a deliverable instead and belong to `$fabrio:execute-task`; a task with **no mode set** hasn't been classified yet, so it also goes through `$fabrio:execute-task` first. If none, output "No tasks are currently available to work on." and stop. Otherwise list them, then run **Steps 2–12 for each in order**, returning here after each.
+**Batch mode** (no number): fetch all workable repo tasks with `list_tasks` — `{ execution_mode: "repo", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }`. This skill implements **repo work** — anything whose deliverable is files in a site repo, whatever department owns it (a marketing landing page and a content blog post both qualify). Tasks in `artifact`/`external` mode produce a deliverable instead and belong to `$fabrio:execute-task`; a task with **no mode set** hasn't been classified yet, so it also goes through `$fabrio:execute-task` first. If none, output "No tasks are currently available to work on." and stop. Otherwise list them, then run **Steps 2–12 for each in order**, returning here after each.
+
+Accept an optional **`--delegated`** flag anywhere in the arguments. `$fabrio:ops-heartbeat` passes it when it dispatches this skill directly, and `$fabrio:execute-task`'s own delegation to this skill (its Step 8, always a `delegate the referenced $fabrio:* skill to a Codex sub-agent` child regardless of how `execute-task` itself was invoked) passes it unconditionally too. A human typing `$fabrio:feature-request {n}` directly normally doesn't set it. The flag changes nothing here — it only gates how Step 5 handles a clarification question.
 
 > **Model routing note:** batch mode runs every task in the current session's model — it does not switch per task. Tier-aware routing is `$fabrio:ops-heartbeat`'s job (it dispatches each task as its own delegated `$fabrio:feature-request {n}` on the resolved model). Step 5.5 still classifies unset tiers so those runs route correctly.
 
@@ -74,7 +79,7 @@ git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
 
 ## Step 2 — Fetch Full Task Data
 
-Call `get_task` with `{ task_number }`. It returns the task plus `site` (id, name, relative_path, live_url, ai_context), `questions` (threads with messages), and `attachments` in one call. If it returns null, output `Error: Task #{task_number} not found.` and stop/skip. Note `task.department` (scopes learnings) and `task.site.ai_context`. Full site path = `{source_root}/{task.site.relative_path}`.
+Call `get_task` with `{ task_number }`. It returns the task plus `account` (id, name, ai_context, git_provider — the workspace-wide instructions and resolved git provider; matches Step 0's `PROVIDER`), `site` (id, name, relative_path, live_url, ai_context), `questions` (threads with messages), and `attachments` in one call. If it returns null, output `Error: Task #{task_number} not found.` and stop/skip. Note `task.department` (scopes learnings), `task.account.ai_context` (workspace rules — read before creating the branch, it may fix the naming convention) and `task.site.ai_context`. Full site path = `{source_root}/{task.site.relative_path}`.
 
 ---
 
@@ -101,11 +106,15 @@ Check existing state before doing work, in order:
 
 **PR exists, status not updated** — `pr_url` AND `pr_number` set AND `status != 'under_review'`: before skipping to Step 11, check for unread review feedback:
 ```bash
-gh api repos/{owner}/{repo}/issues/{task.pr_number}/comments --jq '[.[] | select(.user.type != "Bot")] | sort_by(.created_at)'
-gh pr view {task.pr_number} --repo {owner}/{repo} --json headRefOid,updatedAt
+{PROVIDER.ops.pr_comments}   # substitute {pr_number} and {repo}/{org}/{project}
+{PROVIDER.ops.view_pr}       # read the "last updated" timestamp — see "Reading provider output" below
 git log origin/{branch_name} -1 --format="%aI"
 ```
-Derive `{owner}/{repo}` from `pr_url`. **If the latest human comment is newer than the latest branch commit**, treat it as `changes_needed`: read every comment (they are the required changes), output `↩  … has new review comments since last push. Implementing.`, check out the branch, and run Step 7 → 8 → 9 → 10 (push) → 11. **Otherwise** output `↩  … Resuming from Step 11.` and skip straight to Step 11.
+Derive `{repo}`/`{org}`/`{project}` from `task.pr_url` per `PROVIDER.coordinates`.
+
+**Reading provider output.** GitHub's `pr_comments` returns a flat, chronologically-sortable array; Azure DevOps' returns threads of comments (`az devops invoke` on `pullRequestThreads`) — flatten to the same `[{author, created_at, body}]` shape before comparing. For "last updated", GitHub's `view_pr` has `updatedAt`; Azure DevOps' has no single equivalent field on `az repos pr show` — use the latest comment/thread timestamp from `pr_comments` instead.
+
+**If the latest human comment is newer than the latest branch commit**, treat it as `changes_needed`: read every comment (they are the required changes), output `↩  … has new review comments since last push. Implementing.`, check out the branch, and run Step 7 → 8 → 9 → 10 (push) → 11. **Otherwise** output `↩  … Resuming from Step 11.` and skip straight to Step 11.
 
 **Plan exists, no PR** — `task_plan` set AND `pr_url` null: output `↩  … Resuming from Step 7.`, `log_task_history { action: "skill_resumed" }`, skip Steps 4–6, go to Step 7 using the existing plan.
 
@@ -131,11 +140,11 @@ Then call `list_decisions` with `{ site_id: task.site_id, status: "decided" }`. 
 
 ## Step 5 — Review for Clarity
 
-Read `task.site.ai_context` **first if present** (foundational), then `task.title`, `description`, `feature_summary`, `acceptance_criteria`, and all question threads. If `task.attachments` is non-empty, view each image `public_url` (via WebFetch or an image tool) before implementing — treat it as a visual spec (note PDFs but focus on images).
+Read the context layers widest-first — `task.account.ai_context` (workspace rules), then `task.site.ai_context` (this repo), then `task.title`, `description`, `feature_summary`, `acceptance_criteria`, and all question threads. All binding, none advisory; on a direct conflict the narrower layer wins. If `task.attachments` is non-empty, view each image `public_url` (via WebFetch or an image tool) before implementing — treat it as a visual spec (note PDFs but focus on images).
 
 For `changes_needed`, read ALL PR review comments chronologically:
 ```bash
-gh api repos/{owner}/{repo}/issues/{task.pr_number}/comments --jq '[.[] | select(.user.type != "Bot")] | sort_by(.created_at) | .[] | "[\(.created_at)] \(.user.login): \(.body)"'
+{PROVIDER.ops.pr_comments}   # substitute {pr_number} and {repo}/{org}/{project}; flatten Azure DevOps' threads to one chronological list
 ```
 Comments after the last branch push are the most recent required changes.
 
@@ -163,6 +172,8 @@ Then attach a decision question to THIS task with `create_task_question { task_i
 
 Then skip (batch) / stop (single). Batch: `⏭  Task #{n} — clarification needed. Question posted. Moving on.` Single: `Paused: clarification needed … answer in the Questions tab, then re-run.` Otherwise continue to Step 5.5.
 
+> **`--delegated` means never prompt interactively.** With that flag set, there is no one to answer a chat prompt, so (a)/(b) above are the *only* way to raise a clarification: record it and skip/stop as just described. **Without `--delegated`** (a human invoked this directly), asking the question in chat instead is fine — that's today's behavior and it's unchanged; posting it via `create_task_question` is equally fine when you'd rather leave a record.
+
 ---
 
 ## Step 5.5 — Classify Difficulty (if unset)
@@ -180,7 +191,7 @@ Persist with `update_task { task_id, fields: { difficulty: "{tier}" } }` (the fi
 
 > **Checkpoint:** saved to the DB immediately — an interrupted run resumes from here.
 
-Read the codebase first (use `ai_context` alongside the files, follow CLAUDE.md conventions). Write a plan covering: **Summary**, **Approach**, **Files to Create/Modify**, **Database Changes** (or "None"), **Sub-Skills Applied**, **Learnings Applied** (id + title from Step 4.5, or "None loaded"), **Testing**. Save it: `update_task { task_id, fields: { task_plan: "<the plan markdown>" } }` (auto-logs `plan_saved`). Print the plan for the user to review before code is written.
+Read the codebase first (use the workspace and site `ai_context` alongside the files, follow CLAUDE.md conventions). Write a plan covering: **Summary**, **Approach**, **Files to Create/Modify**, **Database Changes** (or "None"), **Sub-Skills Applied**, **Learnings Applied** (id + title from Step 4.5, or "None loaded"), **Testing**. Save it: `update_task { task_id, fields: { task_plan: "<the plan markdown>" } }` (auto-logs `plan_saved`). Print the plan for the user to review before code is written.
 
 ---
 
@@ -193,11 +204,13 @@ Call `claim_task { task_id }`. It atomically transitions `ready`/`changes_needed
 
 (The resume-from-existing-PR path in Step 3.5 jumps to Step 11 and skips this claim.)
 
+**Branch naming comes from `task.account.ai_context` when it specifies a convention.** The pattern below is the default, not a mandate — when the workspace fixes one, follow it, and when checking whether the branch already exists, grep for the task number rather than the literal `feature/task-` prefix.
+
 ### `ready` — new branch (or resume existing)
 Ensure a clean tree first; if dirty with unrelated work, `git stash push -u -m "pre-task-{task_number} WIP"` and tell the user. Then:
 ```bash
 git fetch origin
-git branch -a | grep "feature/task-{task_number}-"          # resume if it already exists (checkout + pull)
+git branch -a | grep "task-{task_number}-"                   # resume if it already exists (checkout + pull)
 git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
 git checkout -b feature/task-{task_number}-{short-slug}      # {short-slug} = 3–5 word kebab-case of the title
 ```
@@ -205,7 +218,7 @@ git checkout -b feature/task-{task_number}-{short-slug}      # {short-slug} = 3�
 
 ### `changes_needed` — check out existing branch
 ```bash
-BR=$(gh pr view {task.pr_number} --json headRefName -q '.headRefName')
+BR=$({PROVIDER.ops.view_pr} | ...)   # extract the branch-name field — see "Reading provider output" in Step 3.5 (headRefName vs sourceRefName)
 git fetch origin && git checkout "$BR" && git pull origin "$BR"
 ```
 
@@ -236,7 +249,7 @@ Run `npm run build` in the repo you changed. **Do not create the PR if it fails.
 ### `ready` — create PR (target `$BASE_BRANCH`)
 ```bash
 git push -u origin feature/task-{task_number}-{short-slug}
-gh pr create --base "$BASE_BRANCH" --title "Task #{task_number}: {task.title}" --body "$(cat <<'PRBODY'
+cat > /tmp/pr-body-{task_number}.md <<'PRBODY'
 ## Task #{task_number} — {task.title}
 
 **Department:** {task.department}  **Site:** {task.site_name}
@@ -256,9 +269,10 @@ gh pr create --base "$BASE_BRANCH" --title "Task #{task_number}: {task.title}" -
 ---
 🤖 Implemented by AI via Fabrio `$fabrio:feature-request`
 PRBODY
-)"
-gh pr view --json url,number          # capture pr_url, pr_number
+{PROVIDER.ops.create_pr}   # substitute {base_branch}, {branch}, {title}, {body_file}=/tmp/pr-body-{task_number}.md
 ```
+**Capturing `pr_url`/`pr_number`:** GitHub's `gh pr create` returns no structured output, so follow with `{PROVIDER.ops.view_pr}` scoped to the current branch (`gh pr view --json url,number`) to read them. Azure DevOps' `az repos pr create --output json` already returns the created PR's id and a URL in the same call — no second call needed; if no direct URL field is present, build one as `https://dev.azure.com/{org}/{project}/_git/{repo}/pullrequest/{pullRequestId}`.
+
 Save: `update_task { task_id, fields: { pr_url: "{pr_url}", pr_number: {pr_number} } }` (auto-logs `pr_linked`).
 
 ### `changes_needed` — push to existing PR
@@ -278,7 +292,7 @@ git push origin {branch_name}        # PR already exists; pr_url/pr_number uncha
 
 **Runs after every task (single + batch).** Record what this run taught you. Reflect:
 
-1. Codebase surprises not in `ai_context` → `code_pattern`, scoped to this site.
+1. Codebase surprises not in the workspace or site `ai_context` → `code_pattern`, scoped to this site. If it holds for **every** site (a tool choice, a naming convention), record it portfolio-scoped (`site_id: null`) and say in the content that its home is the workspace's AI instructions (Settings → AI instructions).
 2. What failed on first attempt → `pitfall`.
 3. `changes_needed` runs — what the reviewer corrected, phrased as a rule → `review_feedback` (highest value; always record/reinforce one when you processed review comments).
 4. Stylistic/product preference revealed → `preference`.

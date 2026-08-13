@@ -40,9 +40,11 @@ Use `plan.latest_accepted_revision.created_at` (from Step 1) as the cutoff. Fetc
 
 ---
 
-## Step 3 — Load Departments, Learnings & Sibling Sites
+## Step 3 — Load Workspace Context, Departments, Learnings & Sibling Sites
 
-`list_departments` — the valid `department` slugs plus each one's `description` and `playbook`. Never hardcode the slug set; a department added later should be usable without editing this skill.
+`get_account_context` — the workspace's own `ai_context`: portfolio-wide rules that constrain any revised initiative, whatever site or department it lands on. Binding; a revision must not propose items that violate it. It is the widest context layer — a department's `playbook` and a site's `ai_context` are narrower and win a direct conflict.
+
+Then `list_departments` — the valid `department` slugs plus each one's `description` and `playbook`. Never hardcode the slug set; a department added later should be usable without editing this skill.
 
 `list_learnings { site_id: plan.site_id, include_portfolio: true, statuses: ["active"], limit: 20 }`.
 

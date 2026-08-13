@@ -26,10 +26,13 @@ All Fabrio data access goes through the **`fabrio` MCP server** (tools named `mc
 
 Run first; if any check fails, stop:
 
-```bash
-gh auth status                # GitHub CLI must be authed
-```
-- If `gh` isn't authed, stop and tell the user to `gh auth login`.
+**Workspace git provider — do this before anything else, no default, ever (031).** Call `get_account_context`. **If `git_provider` is null, stop the entire run** (a chain can't start without a git host to open its PR against). Do not group tasks, create a branch, or edit a file first. Print exactly:
+> `Error: No git provider is selected for this workspace. Set it in Fabrio → Settings → AI instructions, then re-run /fabrio:feature-chain.`
+
+If `git_provider` is set, run its `ops.auth_check`. On failure, stop and print `git_provider.auth_hint` verbatim. **Never fall back to another provider, and never guess one from the git remote.**
+
+Store the resolved provider as `PROVIDER` — every `PROVIDER.ops.*` reference in the rest of this skill means "run that command, substituting placeholders." `{repo}`/`{org}`/`{project}` come from `PROVIDER.coordinates` applied to the current repo's git remote; for GitHub these are inferred automatically by `gh` from the working directory. `get_task` (Step 3b) returns the same resolved provider as `task.account.git_provider`.
+
 - If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabrio` MCP server isn't connected:
   > Create a key in **Fabrio → Settings → API keys**, then run the **Connect command** shown there:
   > ```
@@ -65,6 +68,9 @@ The arguments are one chain, **in the order given** = the build order. `get_task
 ### Auto-group mode (`--site` or bare)
 Fetch workable tasks with `list_tasks { execution_mode: "repo", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }` (add `site_id` when `--site` is given; resolve a site **name** to its id via `list_sites` first). **Only `repo` tasks can be chained** — a chain *is* a shared git branch, so a deliverable or an external action has nothing to build on. Department doesn't matter: a marketing landing page and a content blog post chain like any other repo work. Non-repo and unclassified tasks belong to `/fabrio:execute-task`. If none, output "No tasks are currently available to chain." and stop.
 
+### `--headless`
+Accept this flag anywhere in the arguments (e.g. `/fabrio:feature-chain --site 3 --headless`). `/fabrio:ops-heartbeat` always passes it on its dispatch (see below); a human typing the command directly normally doesn't. Set **HEADLESS = true** for this run if the flag is present — Step 3e reads this to decide how to raise a clarification question. (A `--step {n}` child sets its own HEADLESS unconditionally — see that section — since it skips this Step entirely.)
+
 **Group per `site_id`, then within each site cluster tasks into chains.** Chain two tasks only when there's **real evidence** one builds on the other, in priority order:
 
 1. **Structured signal (authoritative)** — both tasks came from the same plan and their `plan_items` are linked by `depends_on_item_id`. Each task carries `plan_item_id`; call `get_plan_item { … }` (or read `get_plan`) to see the `depends_on` chain. Order the chain by that dependency; the prerequisite builds first.
@@ -91,8 +97,10 @@ Let `chain` = the ordered tasks. `minN` = the lowest `task_number` in the chain.
 **Base branch** (from inside the repo):
 ```bash
 cd {site_path}
-BASE_BRANCH=$(gh repo view --json defaultBranchRef -q '.defaultBranchRef.name')
+BASE_BRANCH=$({PROVIDER.ops.default_branch})   # Azure DevOps: strip the "refs/heads/" prefix
 ```
+
+**Branch naming comes from the workspace's `ai_context` when it specifies a convention** (see Step 3b) — the pattern below is the default, not a mandate.
 
 **Shared branch — anchored on `minN` so it's reconstructable on resume:** `feature/chain-{minN}-{short-slug}` where `{short-slug}` is a 3–5 word kebab-case theme of the chain.
 
@@ -109,7 +117,7 @@ git branch -a | grep "feature/chain-{minN}-"     # existing chain branch? → re
 
 **Chain-level resume — is this chain already complete?** If any task in the chain has `pr_url`/`pr_number` set, the chain PR already exists. Treat it like `feature-request`'s "PR exists" path: check the shared PR for new human review comments newer than the last branch commit —
 ```bash
-gh api repos/{owner}/{repo}/issues/{pr_number}/comments --jq '[.[] | select(.user.type != "Bot")] | sort_by(.created_at)'
+{PROVIDER.ops.pr_comments}   # substitute {pr_number} and {repo}/{org}/{project}; flatten Azure DevOps' threads to one chronological list
 git log origin/{branch} -1 --format="%aI"
 ```
 If there's newer feedback, read it (it applies to whichever task(s) it names), re-implement on the branch, run Step 8's build gate, push, and stop. If not, output `⏭  Chain feature/chain-{minN}-… already complete (PR #{pr_number}). Skipping.` and move to the next chain.
@@ -130,7 +138,7 @@ A running session can't change models mid-conversation, so each task only lands 
    ```
    Headless dispatch is available **only if that prints `ok`** (exit 0). If it prints anything else, dispatch is **not** available — read the reason and fall back to inline (Step 3), telling the user the exact fix:
    - `Failed to authenticate` / `OAuth session expired` / `loggedIn: false` / any auth error → the `claude` CLI isn't signed in, so no child can run. **Tell the user:** run `claude auth login` (interactive), or for hands-off/scheduled runs `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) in `~/.claude/settings.json` — see **Fabrio → Settings → API keys** for the full setup.
-   - a permission/prompt error or a hang on an `mcp__fabrio` call → the `-p` child isn't allowed to use the MCP unattended. **Tell the user:** add `mcp__fabrio` (plus `Bash(git:*)`, `Bash(gh:*)`, `Bash(npm run:*)`, `Bash(npx:*)`) to `permissions.allow` in `~/.claude/settings.json` (user scope, so it applies in every repo).
+   - a permission/prompt error or a hang on an `mcp__fabrio` call → the `-p` child isn't allowed to use the MCP unattended. **Tell the user:** add `mcp__fabrio` (plus `Bash(git:*)`, `Bash(gh:*)` (or `Bash(az:*)` on an Azure DevOps workspace), `Bash(npm run:*)`, `Bash(npx:*)`) to `permissions.allow` in `~/.claude/settings.json` (user scope, so it applies in every repo).
    - `command not found` → `claude` not on `PATH`.
 
    **Never silently pretend to route.** If the probe fails, you run inline **and** print the reason + fix, so the user can enable routing.
@@ -157,7 +165,7 @@ git log {branch} --grep "^Task #{T.task_number}:" -1
 If a commit exists, T is already implemented on the chain → output `↩  #{T.task_number} already on the branch — skipping to next.` and continue to the next task. (`claim_task` returning `{ claimed:false, current_status:"in_progress" }` for **your own** interrupted run is expected and not a conflict.)
 
 ### 3b — Fetch + validate
-`get_task { task_number: T.task_number }` → task + `site` + `questions` + `attachments`. Null → in a chain this breaks the build order; **hold the chain** (see Step 4) treating T as the blocker. Validate: `execution_mode == 'repo'` (else hold — a chain can't skip a prerequisite it has no way to build, and an unclassified task must go through `/fabrio:execute-task` first) and `status ∈ { ready, changes_needed, in_progress }` (`in_progress` only to resume). Note `task.department` (scopes learnings) and `site.ai_context`.
+`get_task { task_number: T.task_number }` → task + `account` (workspace instructions + resolved git provider) + `site` + `questions` + `attachments`. Null → in a chain this breaks the build order; **hold the chain** (see Step 4) treating T as the blocker. Validate: `execution_mode == 'repo'` (else hold — a chain can't skip a prerequisite it has no way to build, and an unclassified task must go through `/fabrio:execute-task` first) and `status ∈ { ready, changes_needed, in_progress }` (`in_progress` only to resume). Note `task.department` (scopes learnings), `account.ai_context` (workspace rules — the chain's single shared branch must follow the workspace's naming convention if it sets one) and `site.ai_context`.
 
 ### 3c — Open questions → HOLD
 If any `T.questions` has `status='open'`, the chain **holds at T** — go to Step 4. Everything after T depends on it, so don't attempt later tasks.
@@ -166,9 +174,11 @@ If any `T.questions` has `status='open'`, the chain **holds at T** — go to Ste
 `list_learnings { department: T.department, site_id: T.site_id, include_portfolio: true, statuses: ["active"], limit: 12 }` → `loaded_learnings` (treat as instructions: apply `code_pattern`/`preference`; check work against `pitfall`/`review_feedback`; follow `process`). `list_decisions { site_id: T.site_id, status: "decided" }` → `loaded_decisions` (binding — apply, don't re-ask).
 
 ### 3e — Review for clarity
-Read `site.ai_context` first (foundational), then T's `title`, `description`, `feature_summary`, `acceptance_criteria`, question threads, and any image `attachments` (view each `public_url`). For `changes_needed`, read the PR review comments. Ask: **can I implement this completely and correctly without a decision a human should make?** If `loaded_decisions` already covers the ambiguity, apply it and continue. **If clarification is still needed,** open it and **HOLD the chain** (Step 4):
+Read the context layers widest-first — `account.ai_context` (workspace rules), then `site.ai_context` (this repo), then T's `title`, `description`, `feature_summary`, `acceptance_criteria`, question threads, and any image `attachments` (view each `public_url`). All binding; the narrower layer wins a direct conflict. For `changes_needed`, read the PR review comments. Ask: **can I implement this completely and correctly without a decision a human should make?** If `loaded_decisions` already covers the ambiguity, apply it and continue. **If clarification is still needed,** open it and **HOLD the chain** (Step 4):
 - **(a) Structured decision** (choice between concrete options — prefer this): `create_decision { site_id: T.site_id, source_task_id: T.id, key, title, description, options:[…] }`, then `create_task_question { task_id: T.id, content, decision_id }`.
 - **(b) Freeform question:** `create_task_question { task_id: T.id, content }` (auto-flags T blocked).
+
+> **If HEADLESS** (the top-level `--headless` flag, or this is a `--step` child — always headless, see below): (a)/(b) are the *only* way to raise this — there is no one to answer a chat prompt, so record it and hold as just described. **If not HEADLESS** (a human is running this chain directly, no flag): asking in chat instead is fine — that's today's behavior and it's unchanged; posting via `create_task_question` is equally fine when you'd rather leave a record.
 
 ### 3f — Classify difficulty (if unset)
 If `T.difficulty` is null, assign `light` / `standard` (default) / `heavy` and persist: `update_task { task_id: T.id, fields: { difficulty } }`.
@@ -212,9 +222,9 @@ For each task **T** in order:
 2. **Resolve T's model** from the `get_model_tiers` map using `T.difficulty` (default `standard`).
 3. **Dispatch one child** to implement only T on the current branch — run it from the repo dir so it inherits the `fabrio` connection:
    ```bash
-   claude -p "/fabrio:feature-chain --step {T.task_number}" --model "$T_MODEL" --permission-mode acceptEdits
+   claude -p "/fabrio:feature-chain --step {T.task_number} --headless" --model "$T_MODEL" --permission-mode acceptEdits
    ```
-   Wait for it to exit before the next task — never dispatch chain tasks in parallel (they share one checkout).
+   This dispatch is **unconditionally headless** — nobody is watching that child regardless of whether the parent chain itself was invoked with `--headless`, so it always carries the flag. Wait for it to exit before the next task — never dispatch chain tasks in parallel (they share one checkout).
 4. **After the child exits, read the outcome:**
    - A new `Task #{T.task_number}:` commit exists on `{branch}` **and** `get_task` shows T `in_progress` → success; continue to the next task.
    - **No** commit AND T has an open question / `is_blocked` / a posted decision → the child **held** on T. Go to **Step 4** (hold the chain; cascade to downstream tasks; no PR).
@@ -222,15 +232,15 @@ For each task **T** in order:
 
 When every task has its commit and the final build is green, go to **Step 5**. (Step 5's PR is always opened by the parent; per-task retrospectives are run by whoever implemented the task — Step 6.)
 
-> **Unattended runs:** the `--step` children run headless (`-p`), so they need two things set up once (both covered in **Fabrio → Settings → API keys**): (1) an authenticated CLI that stays signed in — `claude auth login`, or a persistent `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` for scheduled runs; and (2) a **user-scope** allow-list in `~/.claude/settings.json` (`mcp__fabrio` plus `Bash(git:*)`, `Bash(gh:*)`, `Bash(npm run:*)`, `Bash(npx:*)`), since a child runs in each site's repo dir where project settings don't apply. The Step 2.5 probe catches both if they're missing. Interactive runs prompt as normal.
+> **Unattended runs:** the `--step` children run headless (`-p`), so they need two things set up once (both covered in **Fabrio → Settings → API keys**): (1) an authenticated CLI that stays signed in — `claude auth login`, or a persistent `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` for scheduled runs; and (2) a **user-scope** allow-list in `~/.claude/settings.json` (`mcp__fabrio` plus `Bash(git:*)`, `Bash(gh:*)` (or `Bash(az:*)` on an Azure DevOps workspace), `Bash(npm run:*)`, `Bash(npx:*)`), since a child runs in each site's repo dir where project settings don't apply. The Step 2.5 probe catches both if they're missing. The inline fallback (Step 3R bullet 4's third case) runs in this same session, so it's HEADLESS only if this run itself was — an attended fallback may still chat-prompt as normal.
 
 ---
 
 ## `--step {n}` — single-task child (internal; used by Step 3R)
 
-**Not a human entry point.** Routed mode dispatches this to implement exactly one task on the **already-checked-out** chain branch, then exit. It never sets up a branch, never resets to base, and never touches a PR.
+**Not a human entry point.** Routed mode dispatches this to implement exactly one task on the **already-checked-out** chain branch, then exit. It never sets up a branch, never resets to base, and never touches a PR. **HEADLESS is always true here** — this mode exists only to be run as a `claude -p` child (see the dispatch note in Step 3R), so 3e must never chat-prompt regardless of the `--headless` flag's literal presence.
 
-1. Run Step 0's `gh` / MCP / source-root checks. **Skip** Step 1, Step 2, and Step 2.5 — the parent already owns grouping, the branch, and mode selection.
+1. Run Step 0's git-provider / MCP / source-root checks. **Skip** Step 1, Step 2, and Step 2.5 — the parent already owns grouping, the branch, and mode selection.
 2. Confirm you're on a `feature/chain-*` branch: `git branch --show-current`. If not, stop with an error (`--step must be run by the chain orchestrator on an existing chain branch`) — do not create one.
 3. Implement task `{n}` by running Step 3's **3b → 3k** for it (fetch/validate, open-question check, learnings/decisions, review-for-clarity, difficulty, plan checkpoint, claim, implement, commit with the `Task #{n}:` marker, build gate).
 4. **On a block** (an open question, or you open a question/decision in 3c/3e, or an invalid status): do **not** commit; post the question as usual (which flags the task blocked) and **exit without error**. The parent detects the missing commit + block and holds the chain.
@@ -264,7 +274,7 @@ The completed work is safe on the branch; Step 3a skips it on the next run.
 Push and open one PR covering the whole chain, targeting `$BASE_BRANCH`:
 ```bash
 git push -u origin feature/chain-{minN}-{short-slug}
-gh pr create --base "$BASE_BRANCH" --title "Chain #{minN}: {chain theme} ({N} tasks)" --body "$(cat <<'PRBODY'
+cat > /tmp/pr-body-chain-{minN}.md <<'PRBODY'
 ## Feature chain — {N} dependent tasks on one branch
 
 **Site:** {site.name}
@@ -288,9 +298,9 @@ _(…one section per task, in build order…)_
 ---
 🤖 Implemented by AI via Fabrio `/fabrio:feature-chain`
 PRBODY
-)"
-gh pr view --json url,number          # capture pr_url, pr_number
+{PROVIDER.ops.create_pr}   # substitute {base_branch}, {branch}, {title}, {body_file}=/tmp/pr-body-chain-{minN}.md
 ```
+**Capturing `pr_url`/`pr_number`:** GitHub returns no structured output from `create_pr`, so follow with `{PROVIDER.ops.view_pr}` scoped to the current branch (`gh pr view --json url,number`). Azure DevOps' `create_pr --output json` already returns the created PR's id/URL in the same call.
 
 Then for **every** task in the chain: `update_task { task_id, fields: { pr_url, pr_number, status: "under_review" } }` (auto-logs `pr_linked` + the status change). Optional: `log_task_history { task_id, action: "ready_for_review", notes: "Chain PR #{pr_number} ready — {position} of {N} in chain (min #{minN})." }`.
 

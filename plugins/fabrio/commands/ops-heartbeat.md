@@ -6,6 +6,17 @@ description: "Runs one cycle of the autonomous ops loop — queues due recurring
 
 One cycle of the self-improving loop, across **every department** — development, design, marketing and content all execute here. The gates stay intact: **PRs always wait for your review, nothing merges** (this skill never calls `/fabrio:merge-task`), and **no outward action is ever performed** — work that needs publishing, sending or spending is prepared for you and stops there.
 
+> **The execution loop now belongs to `fabrio-runner` (034).** That is a plain Node process —
+> no language model — which polls `GET /api/runner/ready` and spawns one child per ready task,
+> in parallel across safe lanes, scoped by each task's agent profile. Steps 0, 1.5, 2 and 2C
+> below are the **manual / no-runner** path: they still work exactly as described when you type
+> this command, and the runner does not exist to replace *you* running a cycle on demand.
+>
+> **What is still only here:** Step 1 (running due recurring jobs) and Step 3 (weekly plan
+> revisions + learnings consolidation). Those need judgement, so they stay in a model. If you
+> run `fabrio-runner` continuously, still schedule this skill **daily** — otherwise recurring
+> jobs never fire and the weekly steps never run.
+
 **Invocation:** `/fabrio:ops-heartbeat` (daily) or `/fabrio:ops-heartbeat --weekly` (also run the weekly steps now). Add `--chain` to have Step 2 handle ready **repo** tasks by **auto-grouping** them into dependency chains via `/fabrio:feature-chain` (dependent tasks build on one shared branch and land as a single PR) instead of the default one-PR-per-task dispatch; non-repo tasks still run individually. Flags combine (`--weekly --chain`). Trigger-agnostic: by hand, via `/loop`, or from cron/launchd/a cloud routine — `--chain` is meant for the unattended scheduled runs where grouping dependent work into one PR is worth more than per-task model routing.
 
 All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) — no Supabase credentials or curl. The server scopes everything to the account whose API key is connected; connect or switch accounts with the connect command from **Fabrio → Settings → API keys**. Headless `claude -p` children spawned in Step 2 inherit this MCP connection automatically (user-scope connections are available everywhere; a local-scope one is inherited when the child runs from the same directory).
@@ -40,7 +51,7 @@ Call `list_due_plan_items` — it returns recurring jobs with `next_run_at <= no
 
 For each item where `eligible === true`, there is **one path**: **dispatch `/fabrio:run-job {item.item_number} --headless`** headlessly (same machinery as Step 2 — run it from this directory so it inherits the `fabrio` connection; resolve the model from the item's `difficulty` tier; append `--headless` like every other dispatch in this skill). The skill walks the job's step tree, reads its sources, dedups against open tasks, files a task at each `create_task` step, records what each step did, and calls `record_generator_run` (which advances `next_run_at`). A failed run records which step stopped it, so the Runs tab shows where it got to. After it exits, increment `jobs_run` and add the run's `tasks_created` to `items_queued`.
 
-- Fallback: if headless dispatch is unavailable, run `/fabrio:run-job {item.item_number}` inline on the current model.
+- If headless dispatch is unavailable, record the failure (`record_generator_run { status: "failed", … }` names the step that stopped it) and move to the next item. Running a job inline is acceptable here **only** because a job's permitted side effects are read-a-source / create-a-task / record-a-receipt — it produces no code and no deliverable, so the model it runs on does not change what ships. A *task* is different; see Step 2c.
 
 **Never call `queue_plan_item_task` here.** A recurring job's tasks come from its steps. That tool is for one-off initiatives (queued from the plan UI) and for `/fabrio:run-job`'s own legacy fallback — which the skill handles itself, including the `advance_cadence: false` that keeps the cadence from double-advancing.
 
@@ -90,9 +101,12 @@ The child owns all DB writes (the claim, the mode classification, the PR or deli
 - now `under_review` **with a `deliverable`** and no PR → `tasks_implemented`++, `deliverables_produced`++, bump `models_used[{tier}]`; if its `execution_mode` is `external`, also `awaiting_human_action`++ (these need a person before they can be approved, so surface them separately)
 - posted a question / `is_blocked` → add T to `blocked_this_run`
 
-**Fallback:** if the tier lookup is empty, `command -v claude` fails, or the child exits non-zero **without** having claimed T (status still `ready`/`changes_needed`), invoke **`/fabrio:execute-task {T.task_number}`** inline in this session instead, and log it:
-`log_task_history { task_id: T.id, action: "dispatch_fallback", notes: "Headless dispatch unavailable/failed — ran /fabrio:execute-task inline on the current model." }`
-Re-running a partially-done task is safe — Step 3.5 of `/fabrio:execute-task` resumes from existing work.
+**On failure, record and move on — never run the task inline.** If the tier lookup is empty, `command -v claude` fails, or the child exits non-zero **without** having claimed T (status still `ready`/`changes_needed`), log it and continue:
+`log_task_history { task_id: T.id, action: "dispatch_failed", notes: "Headless dispatch unavailable or failed — left for the next cycle. {reason}" }`
+
+> **Do not fall back to implementing T in this session.** Running a task inside the orchestrator discards the three things the dispatch exists to provide: process isolation, the per-task model, and the agent profile's tool scope (034) — a session cannot change model or `--allowedTools` mid-conversation. An inline run is not a degraded success, it is a different and less safe execution path. Re-running later is free: Step 3.5 of `/fabrio:execute-task` resumes from existing work.
+>
+> If `command -v claude` fails, that is an environment fault affecting **every** task — say so once and stop Step 2 rather than reporting it N times.
 
 **d. Continue** — move to the next task regardless of outcome; never stop early. (Opens PRs and prepares external packages; **never merges, never publishes or sends anything**.)
 
@@ -118,9 +132,9 @@ The child (and its own per-task grandchildren) own all DB writes — claims, cha
 
 **c. Tally** — after the child exits, re-read that site's tasks with `list_tasks { site_id, execution_mode: "repo", statuses: ["under_review","in_progress","changes_needed"] }` (or the original numbers via `get_task`): each task now `under_review` **with a `pr_number`** → increment `tasks_implemented` and bump `models_used[{tier}]`; count each **distinct new `pr_number`** once toward `prs_opened` (a chain of N tasks is one PR); any task left `in_progress` with no PR or `is_blocked` (a held chain) → add to `blocked_this_run`.
 
-**d. Fallback** — if the tier lookup is empty, `command -v claude` fails, or the child exits non-zero without any of that site's tasks advancing, invoke `/fabrio:feature-chain --site {site_id}` **inline** in this session and log it on one representative task:
-`log_task_history { task_id, action: "dispatch_fallback", notes: "Headless chain dispatch unavailable/failed — ran /fabrio:feature-chain --site {site_id} inline." }`
-Re-running is safe — `feature-chain` skips work already committed on a chain branch.
+**d. On failure, record and move on** — if the tier lookup is empty, `command -v claude` fails, or the child exits non-zero without any of that site's tasks advancing, log it on one representative task and continue to the next site:
+`log_task_history { task_id, action: "dispatch_failed", notes: "Headless chain dispatch unavailable or failed for site {site_id} — left for the next cycle." }`
+**Never run the chain inline** (same reasoning as Step 2c). Re-running later is safe — `feature-chain` skips work already committed on a chain branch.
 
 **e. Continue** to the next site regardless of outcome, then fall through to **2a–2d** for the non-repo and unclassified tasks. (Opens PRs, **never merges**.)
 

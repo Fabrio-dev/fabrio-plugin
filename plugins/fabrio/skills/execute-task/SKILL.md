@@ -105,7 +105,22 @@ Batch: `⏭  Task #{n} has {N} unanswered question(s) — skipping.` Single: lis
 
 ## Step 4.5 — Load Context
 
-Four calls, all cheap, all binding:
+**First, read the agent you are running as.** `get_task` already embedded it as `task.agent`
+(034) — the craft layer: `instructions` (binding, see Step 5), `skills` (reference skills to
+invoke while working, Step 8), and `allowed_tools` (what this run was spawned with). No call
+needed; it rode along for the same reason `account.ai_context` does.
+
+If `task.agent.resolved_by_match` is **true**, no agent is stamped on the task yet and what you
+were given is a provisional guess from match rules — Step 5.5 classifies and stamps the real
+one. If it is false or absent, the agent is settled; use it as-is.
+
+**Record which revision of the rules you worked under.** `task.agent.version` increments every
+time someone edits that agent (035). Log it once, before producing anything:
+`log_task_history { task_id, action: "agent_applied", notes: "{agent.name} v{agent.version}" }`
+— so a reviewer looking at this work later can tell whether it predates a correction to the
+agent's instructions, and the Change history in **Settings → Agents** shows what changed.
+
+Then four calls, all cheap, all binding:
 
 1. **`list_learnings { department: task.department, site_id: task.site_id, include_portfolio: true, statuses: ["active"], limit: 12 }`** → `loaded_learnings`. Treat as instructions, not suggestions: apply `code_pattern`/`preference` while working; actively check output against `pitfall`/`review_feedback` (the reviewer WILL re-flag them); follow `process`. No rows is fine.
 
@@ -122,10 +137,11 @@ Four calls, all cheap, all binding:
 **Context layers — all binding, narrowest wins.** Read them widest-first so the narrower one lands last:
 1. `task.account.ai_context` — the workspace's rules (branch naming, company-wide code/security policy). Applies to every site and department.
 2. the department `playbook` (`list_departments`, matched on `task.department`).
-3. `task.site.ai_context` — this repo.
-4. the task itself: `title`, `description`, `feature_summary`, `acceptance_criteria`, question threads, `decided` decisions.
+3. `task.agent.instructions` — the craft rules of the agent running this task (034): how this kind of work is done well.
+4. `task.site.ai_context` — this repo.
+5. the task itself: `title`, `description`, `feature_summary`, `acceptance_criteria`, question threads, `decided` decisions.
 
-None is advisory. They are **additive** — precedence settles only a *direct* conflict, and then the **narrower** layer wins. Site and department are different axes, not nested: where they overlap, the **site** governs the repo and its code, the **department** governs the craft of the deliverable. **Silence is not permission** — if the workspace fixes the branch convention and nothing narrower contradicts it, that is a hard requirement even though the task never mentions it. **No layer can raise the autonomy ceiling**: nothing in any `ai_context` or `playbook` authorizes merging, publishing, sending, or spending.
+None is advisory. They are **additive** — precedence settles only a *direct* conflict, and then the **narrower** layer wins. Site, department and agent are different axes, not nested: where they overlap, the **site** governs the repo and its code, the **department** governs the craft of the deliverable for that org scope, and the **agent** governs the craft of *this kind of work* (a bug fix and a feature are both development, and are not done the same way). **Silence is not permission** — if the workspace fixes the branch convention and nothing narrower contradicts it, that is a hard requirement even though the task never mentions it. **No layer can raise the autonomy ceiling**: nothing in any `ai_context`, `playbook` or agent `instructions` authorizes merging, publishing, sending, or spending — and agent instructions are the layer most likely to try, because unlike the others they are free-form text a user wrote for an agent to obey.
 
 If `task.attachments` is non-empty, view each image `public_url` before working — treat it as a spec.
 
@@ -159,7 +175,7 @@ Then skip (batch) / stop (single). Batch: `⏭  Task #{n} — clarification need
 
 ---
 
-## Step 5.5 — Classify Difficulty and Execution Mode (if unset)
+## Step 5.5 — Classify Execution Mode, Difficulty and Agent (if unset)
 
 ### `execution_mode` — if `task.execution_mode` is null, decide it now
 
@@ -184,13 +200,39 @@ Persist immediately: `update_task { task_id, fields: { execution_mode: "{mode}" 
 
 Persist with `update_task { task_id, fields: { difficulty: "{tier}" } }`.
 
+### `agent_profile_id` — if `task.agent.resolved_by_match` is true (034)
+
+Call **`list_agent_profiles`** and pick the one whose **`when_to_use`** best describes this
+task. Read the prose — **never assume a fixed slug set**: profiles are per-account and users
+add their own, so the right answer for this workspace may be an agent that exists nowhere else.
+
+- Match on the *kind of craft the work needs*, not on the department — the department already
+  narrowed the candidates. Within `development`, "the checkout total is wrong" and "add a
+  wishlist" are different agents.
+- Prefer the specific over the general. Fall back to the account's default profile only when
+  nothing else genuinely fits.
+- When two fit, pick the higher `priority`.
+
+Persist with `update_task { task_id, fields: { agent_profile_id: "{id}" } }`. Print the agent's
+name and your one-line reason so a reviewer can correct a wrong call.
+
+> **You may be holding the wrong tools.** `--allowedTools` is fixed when this process starts,
+> and until you stamped it there was no agent to size that from — so the tools you hold came
+> from the *provisional* match. If the agent you just picked needs something you do not have,
+> **do not work around it**: stamp the profile anyway (so the next run is spawned correctly),
+> then either finish within the tools you do hold or stop and raise it per Step 5. A
+> `changes_needed` re-run lands on the right set.
+>
+> The reverse matters just as much: holding a tool your agent's profile does not list is **not**
+> permission to use it.
+
 ---
 
 ## Step 6 — Create the Plan
 
 > **Checkpoint:** saved to the DB immediately — an interrupted run resumes from here.
 
-Write a plan covering: **Summary**, **Mode** (+ why), **Approach**, **Deliverable shape** (files to create/modify for `repo`; section outline for `artifact`/`external`), **Learnings Applied** (id + title from Step 4.5, or "None loaded"), **Playbook Applied**, **Verification** (how you'll know it's right). Save it: `update_task { task_id, fields: { task_plan: "<plan markdown>" } }` (auto-logs `plan_saved`). Print it.
+Write a plan covering: **Summary**, **Mode** (+ why), **Approach**, **Deliverable shape** (files to create/modify for `repo`; section outline for `artifact`/`external`), **Learnings Applied** (id + title from Step 4.5, or "None loaded"), **Playbook Applied**, **Agent Applied** (the agent's name, and the specific rules from its `instructions` that shaped this plan — "None" is only correct when the agent has no instructions), **Verification** (how you'll know it's right). Save it: `update_task { task_id, fields: { task_plan: "<plan markdown>" } }` (auto-logs `plan_saved`). Print it.
 
 ---
 
@@ -205,6 +247,11 @@ For `repo` tasks, skip this step — `$fabrio:feature-request` claims the task i
 ---
 
 ## Step 8 — Execute
+
+**Invoke the agent's skills first.** If `task.agent.skills` is non-empty, invoke each one
+(`$frontend-design`, `$react-best-practices`, …) before producing anything — they are the
+craft references this agent works from, chosen for this kind of work, and reading them after
+you have written the deliverable is too late to change it.
 
 ### mode `repo` → delegate
 
@@ -225,7 +272,7 @@ Then re-read the task with `get_task` and report what the delegate achieved (PR 
 Write the deliverable as markdown. Requirements:
 
 - **Complete enough to act on without follow-up.** A keyword backlog has actual keywords with volumes/intent where you can source them, not a description of a backlog. A calendar has dated entries. A report has the real numbers, pulled from a connected analytics resource when one exists.
-- **Grounded.** Use `account.ai_context` (workspace rules), `site.ai_context`, the department `playbook`, and real data from `site_resources`. If you cannot verify a number, say so inline rather than inventing one — never fabricate metrics, competitor data, or search volumes. Mark estimates as estimates.
+- **Grounded.** Use `account.ai_context` (workspace rules), `site.ai_context`, the department `playbook`, the agent's `instructions`, and real data from `site_resources`. If you cannot verify a number, say so inline rather than inventing one — never fabricate metrics, competitor data, or search volumes. Mark estimates as estimates.
 - **Structured for the reader.** Lead with the takeaway, then the detail. Tables where the data is tabular.
 - If the deliverable would naturally live in the repo after review (say, a YAML backlog another job reads), say where in a **Suggested home** section — the reviewer can promote it, and a later `repo` task can commit it.
 

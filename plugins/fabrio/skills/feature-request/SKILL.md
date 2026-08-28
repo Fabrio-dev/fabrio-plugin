@@ -79,7 +79,7 @@ git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
 
 ## Step 2 — Fetch Full Task Data
 
-Call `get_task` with `{ task_number }`. It returns the task plus `account` (id, name, ai_context, git_provider — the workspace-wide instructions and resolved git provider; matches Step 0's `PROVIDER`), `site` (id, name, relative_path, live_url, ai_context), `questions` (threads with messages), and `attachments` in one call. If it returns null, output `Error: Task #{task_number} not found.` and stop/skip. Note `task.department` (scopes learnings), `task.account.ai_context` (workspace rules — read before creating the branch, it may fix the naming convention) and `task.site.ai_context`. Full site path = `{source_root}/{task.site.relative_path}`.
+Call `get_task` with `{ task_number }`. It returns the task plus `account` (id, name, ai_context, git_provider — the workspace-wide instructions and resolved git provider; matches Step 0's `PROVIDER`), `site` (id, name, relative_path, live_url, ai_context), `questions` (threads with messages), and `attachments` in one call. If it returns null, output `Error: Task #{task_number} not found.` and stop/skip. Note `task.department` (scopes learnings), `task.account.ai_context` (workspace rules — read before creating the branch, it may fix the naming convention), `task.site.ai_context`, and `task.agent` (034 — the craft layer: its `instructions` are binding, and its `skills` are the references to apply in Step 6/7). Full site path = `{source_root}/{task.site.relative_path}`.
 
 ---
 
@@ -140,7 +140,7 @@ Then call `list_decisions` with `{ site_id: task.site_id, status: "decided" }`. 
 
 ## Step 5 — Review for Clarity
 
-Read the context layers widest-first — `task.account.ai_context` (workspace rules), then `task.site.ai_context` (this repo), then `task.title`, `description`, `feature_summary`, `acceptance_criteria`, and all question threads. All binding, none advisory; on a direct conflict the narrower layer wins. If `task.attachments` is non-empty, view each image `public_url` (via WebFetch or an image tool) before implementing — treat it as a visual spec (note PDFs but focus on images).
+Read the context layers widest-first — `task.account.ai_context` (workspace rules), then the department `playbook`, then `task.agent.instructions` (how this kind of work is done well), then `task.site.ai_context` (this repo), then `task.title`, `description`, `feature_summary`, `acceptance_criteria`, and all question threads. All binding, none advisory; on a direct conflict the narrower layer wins. **No layer raises the autonomy ceiling** — nothing in an agent's `instructions` authorizes merging, publishing, sending or spending. If `task.attachments` is non-empty, view each image `public_url` (via WebFetch or an image tool) before implementing — treat it as a visual spec (note PDFs but focus on images).
 
 For `changes_needed`, read ALL PR review comments chronologically:
 ```bash
@@ -191,7 +191,7 @@ Persist with `update_task { task_id, fields: { difficulty: "{tier}" } }` (the fi
 
 > **Checkpoint:** saved to the DB immediately — an interrupted run resumes from here.
 
-Read the codebase first (use the workspace and site `ai_context` alongside the files, follow CLAUDE.md conventions). Write a plan covering: **Summary**, **Approach**, **Files to Create/Modify**, **Database Changes** (or "None"), **Sub-Skills Applied**, **Learnings Applied** (id + title from Step 4.5, or "None loaded"), **Testing**. Save it: `update_task { task_id, fields: { task_plan: "<the plan markdown>" } }` (auto-logs `plan_saved`). Print the plan for the user to review before code is written.
+Read the codebase first (use the workspace and site `ai_context` alongside the files, follow CLAUDE.md conventions). Write a plan covering: **Summary**, **Approach**, **Files to Create/Modify**, **Database Changes** (or "None"), **Sub-Skills Applied** (include every skill in `task.agent.skills` — those are this agent's craft references, not optional extras), **Learnings Applied** (id + title from Step 4.5, or "None loaded"), **Agent Applied** (the agent's name and the rules from its `instructions` that shaped this plan), **Testing**. Save it: `update_task { task_id, fields: { task_plan: "<the plan markdown>" } }` (auto-logs `plan_saved`). Print the plan for the user to review before code is written.
 
 ---
 

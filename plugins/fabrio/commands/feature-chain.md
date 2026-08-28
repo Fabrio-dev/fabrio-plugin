@@ -219,11 +219,13 @@ Used when Step 2.5 chose **routed mode**. You are already on the shared chain br
 For each task **T** in order:
 
 1. **Already done?** `git log {branch} --grep "^Task #{T.task_number}:" -1` — if a commit exists, T is on the branch already → skip to the next task.
-2. **Resolve T's model** from the `get_model_tiers` map using `T.difficulty` (default `standard`).
+2. **Resolve T's model** from the `get_model_tiers` map using `T.difficulty` (default `standard`), and **T's tool scope** from `T.agent.allowed_tools` (034). Both are per task — tasks in one chain routinely resolve to different agents, so read them from T, never from the first task or from the chain.
 3. **Dispatch one child** to implement only T on the current branch — run it from the repo dir so it inherits the `fabrio` connection:
    ```bash
-   claude -p "/fabrio:feature-chain --step {T.task_number} --headless" --model "$T_MODEL" --permission-mode acceptEdits
+   claude -p "/fabrio:feature-chain --step {T.task_number} --headless" --model "$T_MODEL" --permission-mode acceptEdits --allowedTools "{comma-joined T.agent.allowed_tools}"
    ```
+   `--allowedTools` is fixed at spawn, so a child started without it silently runs on the machine's full allow-list — and this child is the one writing the code. Omit the flag only when `T.agent.allowed_tools` is empty (a workspace with no profiles yet), since an empty list would spawn a child that can do nothing.
+
    This dispatch is **unconditionally headless** — nobody is watching that child regardless of whether the parent chain itself was invoked with `--headless`, so it always carries the flag. Wait for it to exit before the next task — never dispatch chain tasks in parallel (they share one checkout).
 4. **After the child exits, read the outcome:**
    - A new `Task #{T.task_number}:` commit exists on `{branch}` **and** `get_task` shows T `in_progress` → success; continue to the next task.

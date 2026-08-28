@@ -249,8 +249,15 @@ you have written the deliverable is too late to change it.
 Do **not** reimplement branch/build/PR mechanics. Dispatch:
 
 ```bash
-claude -p "/fabrio:feature-request {task_number} --headless" --permission-mode acceptEdits
+claude -p "/fabrio:feature-request {task_number} --headless" --permission-mode acceptEdits --allowedTools "{comma-joined task.agent.allowed_tools}"
 ```
+
+**Pass the agent's tool scope through.** `--allowedTools` is fixed when a process spawns, so a
+grandchild started without it silently runs on the machine's full allow-list — and this
+grandchild is the one that actually writes the code. Dropping the scope here would undo the
+narrowing for every `repo` task, which is the mode where it matters most. Omit the flag **only**
+when `task.agent.allowed_tools` is empty (an unclassified workspace with no profiles yet), since
+an empty list would spawn a child that can do nothing.
 
 This dispatch is **unconditionally headless** — nobody is watching that child regardless of whether this `execute-task` run itself was invoked with `--headless`, so it always carries the flag.
 

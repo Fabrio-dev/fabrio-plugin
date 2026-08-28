@@ -261,6 +261,13 @@ Do **not** reimplement branch/build/PR mechanics. Dispatch:
 Delegate `$fabrio:feature-request {task_number} --delegated` to a Codex sub-agent and wait for completion.
 ```
 
+**Pass the agent's tool scope through.** `--allowedTools` is fixed when a process spawns, so a
+grandchild started without it silently runs on the machine's full allow-list — and this
+grandchild is the one that actually writes the code. Dropping the scope here would undo the
+narrowing for every `repo` task, which is the mode where it matters most. Omit the flag **only**
+when `task.agent.allowed_tools` is empty (an unclassified workspace with no profiles yet), since
+an empty list would spawn a child that can do nothing.
+
 This dispatch is **unconditionally delegated** — nobody is watching that child regardless of whether this `execute-task` run itself was invoked with `--delegated`, so it always carries the flag.
 
 Then re-read the task with `get_task` and report what the delegate achieved (PR url, or the reason it stopped — a posted question, a failed build). If it left the task `in_progress` with no PR, treat that as a held task and say so; do not retry it in a loop.

@@ -89,12 +89,13 @@ Call `list_tasks { statuses: ["ready", "changes_needed"], is_blocked: false, ord
 `log_task_history { task_id: T.id, action: "blocked_by_dependency", notes: "Skipped: depends on task #{prereq} which is blocked — both blocked until #{prereq} is resolved." }`
 (A prerequisite merely *not done yet* but not blocked does **not** skip T — only a blocked one cascades.) You can see a task's plan item + dependency via `get_task`/`list_tasks`; use `list_due_plan_items` output or `get_plan` when you need the dependency chain.
 
-**b. Resolve the model** for T's tier (default `standard` when `difficulty` is null) from the `get_model_tiers` result.
+**b. Resolve the model and the tool scope** — the model for T's tier (default `standard` when `difficulty` is null) from the `get_model_tiers` result, and T's agent tool scope from `get_task { task_number }` → `task.agent.allowed_tools` (034). `fabrio-runner` resolves both server-side (`getDispatchQueue`); this manual path has to do it itself, and must produce the same command, or a heartbeat run silently grants wider tools than a runner run.
 
 **c. Dispatch** — run T as its own headless session on the resolved model. Launch it from the **same directory you're running this heartbeat from** — that guarantees the child inherits the `fabrio` connection whether it was added at user scope (available everywhere) or local scope (tied to this directory). The `/fabrio:execute-task` command itself is always available once the plugin is installed. Headless `-p` mode can't prompt, so tools must be allow-listed (see Permissions note):
 ```bash
-claude -p "/fabrio:execute-task {T.task_number} --headless" --model "$MODEL" --permission-mode acceptEdits
+claude -p "/fabrio:execute-task {T.task_number} --headless" --model "$MODEL" --permission-mode acceptEdits --allowedTools "{comma-joined task.agent.allowed_tools}"
 ```
+Omit `--allowedTools` only when the list is empty (a workspace with no agent profiles yet) — an empty list spawns a child that can do nothing.
 The child owns all DB writes (the claim, the mode classification, the PR or deliverable, its own history + retrospective). After it exits, **re-read** T with `get_task { task_number }` and tally from that:
 
 - now `under_review` **with a `pr_number`** → `tasks_implemented`++, `prs_opened`++, bump `models_used[{tier}]`

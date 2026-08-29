@@ -226,6 +226,11 @@ For each task **T** in order:
    ```
    `--allowedTools` is fixed at spawn, so a child started without it silently runs on the machine's full allow-list — and this child is the one writing the code. Omit the flag only when `T.agent.allowed_tools` is empty (a workspace with no profiles yet), since an empty list would spawn a child that can do nothing.
 
+   **Run it in the FOREGROUND and block until it exits — never background it.** In headless
+   `-p` mode this orchestrator ends as soon as it stops emitting output, taking the `--step`
+   child with it: no commit lands, the chain looks stalled, and the run exits 0 as though it
+   had succeeded. There is no completion notification to wait for.
+
    This dispatch is **unconditionally headless** — nobody is watching that child regardless of whether the parent chain itself was invoked with `--headless`, so it always carries the flag. Wait for it to exit before the next task — never dispatch chain tasks in parallel (they share one checkout).
 4. **After the child exits, read the outcome:**
    - A new `Task #{T.task_number}:` commit exists on `{branch}` **and** `get_task` shows T `in_progress` → success; continue to the next task.

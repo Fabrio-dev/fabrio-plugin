@@ -270,6 +270,17 @@ an empty list would spawn a child that can do nothing.
 
 This dispatch is **unconditionally delegated** — nobody is watching that child regardless of whether this `execute-task` run itself was invoked with `--delegated`, so it always carries the flag.
 
+> **Run it in the FOREGROUND and block until it exits. Never background this command.**
+> Implementing a feature takes minutes, which makes backgrounding it look like the considerate
+> choice — it is not. In delegated Codex mode this process ends as soon as you stop emitting
+> output, and it takes the delegate down with it: the branch is never created, the PR is never
+> opened, and the task is left `ready` while this run exits **0**. To the dispatcher that reads
+> as success, so the same task is picked up and killed again on the next cycle.
+>
+> There is no completion notification to wait for and nothing will wake you up. Do not
+> background it, do not poll for it, do not schedule a follow-up check — issue the command,
+> wait for the exit code, then continue below.
+
 Then re-read the task with `get_task` and report what the delegate achieved (PR url, or the reason it stopped — a posted question, a failed build). If it left the task `in_progress` with no PR, treat that as a held task and say so; do not retry it in a loop.
 
 > Running attended and already inside the repo? Invoking `$fabrio:feature-request {n}` directly in-session is equivalent (and, run that way with no flag, genuinely attended) — the dispatch form above exists so delegated Codex agents get a clean context.

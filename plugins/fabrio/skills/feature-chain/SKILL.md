@@ -25,7 +25,7 @@ Implement **dependent** `execution_mode='repo'` tasks together: run them one-at-
 
 **Resume:** re-running detects work already committed on the shared branch (per-task `Task #{n}:` commit markers) and picks up from the first task that isn't done yet.
 
-**Model routing (automatic):** a session can't switch models mid-run, so whenever delegated dispatch is available, **every** task is implemented in its own delegated Codex agent on its tier's mapped model (a `light` task on the cheap model, a `heavy` one on the capable model), all on the same shared branch — regardless of what model this session is running. Only when delegated dispatch isn't available does the chain fall back to running inline on the current session's model (with a warning that tasks aren't routed). See Step 2.5.
+**Model routing (automatic):** whenever delegated dispatch is available, every task is implemented in its own child on its tier's mapped model (all on the shared branch), so the chain isn't stuck on this session's model. It falls back to inline on the current model only when dispatch is unavailable, with a warning. See Step 2.5.
 
 ---
 
@@ -35,7 +35,7 @@ All Fabrio data access goes through the **`fabrio` MCP server** (tools named `mc
 
 Run first; if any check fails, stop:
 
-**Workspace git provider — do this before anything else, no default, ever (031).** Call `get_account_context`. **If `git_provider` is null, stop the entire run** (a chain can't start without a git host to open its PR against). Do not group tasks, create a branch, or edit a file first. Print exactly:
+**Workspace git provider — do this before anything else, no default, ever.** Call `get_account_context`. **If `git_provider` is null, stop the entire run** (a chain can't start without a git host to open its PR against). Do not group tasks, create a branch, or edit a file first. Print exactly:
 > `Error: No git provider is selected for this workspace. Set it in Fabrio → Settings → AI instructions, then re-run $fabrio:feature-chain.`
 
 If `git_provider` is set, run its `ops.auth_check`. On failure, stop and print `git_provider.auth_hint` verbatim. **Never fall back to another provider, and never guess one from the git remote.**
@@ -173,9 +173,7 @@ Read the codebase, then save a per-task plan so an interrupted run has context: 
 - `{ claimed: false, current_status }` → `in_progress` is your own resume (proceed); `under_review`/`approved`/`done` means it was handled elsewhere — that breaks the chain's assumptions, so **hold** and tell the user T is already past implementation.
 
 ### 3i — Implement (on the shared branch)
-Follow the plan; read adjacent files and match existing patterns exactly. DB changes → **new numbered migration** in `supabase/migrations/` + update `supabase/schema.sql`. Type-check with `npx tsc --noEmit` as you go. **Sub-skills — invoke when applicable:** `$frontend-design`, `$react-best-practices`, `$web-design-guidelines`, `$composition-patterns`, `$ux-review`.
-
-**Fabrio conventions:** dark mode only (`zinc-950` → `zinc-900` → `zinc-800`); success `emerald-400`, destructive `rose-400`; API routes follow `app/api/sites/` & `app/api/tasks/`; hooks follow the SWR pattern in `hooks/useSites.ts`.
+Follow the plan; read adjacent files and match existing patterns exactly — including the repo's own `CLAUDE.md`/`AGENTS.md` and its DB-migration workflow. Type-check with the repo's own command as you go. **Sub-skills — invoke when applicable:** `$frontend-design`, `$react-best-practices`, `$web-design-guidelines`, `$composition-patterns`, `$ux-review`.
 
 ### 3j — Commit with the resume marker
 Commit T's work in logical units; the **first line of at least one commit for T must start** `Task #{T.task_number}:` — this is the resume marker Step 3a greps for:

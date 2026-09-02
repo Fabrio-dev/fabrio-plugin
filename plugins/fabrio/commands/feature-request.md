@@ -21,7 +21,7 @@ All Fabrio data access goes through the **`fabrio` MCP server** (tools named `mc
 
 Run first; if any check fails, stop:
 
-**Workspace git provider — do this before anything else, no default, ever (031).** Call `get_account_context`. **If `git_provider` is null, stop the entire run** — batch mode too, this is a workspace config error, not a per-task one, and failing per task would print the same message N times. Do not claim a task, create a branch, or edit a file first. Print exactly:
+**Workspace git provider — do this before anything else, no default, ever.** Call `get_account_context`. **If `git_provider` is null, stop the entire run** — batch mode too, this is a workspace config error, not a per-task one, and failing per task would print the same message N times. Do not claim a task, create a branch, or edit a file first. Print exactly:
 > `Error: No git provider is selected for this workspace. Set it in Fabrio → Settings → AI instructions, then re-run /fabrio:feature-request.`
 
 If `git_provider` is set, run its `ops.auth_check`. On failure, stop and print `git_provider.auth_hint` verbatim (e.g. `gh auth login`, or `az login && az extension add --name azure-devops`). **Never fall back to another provider, and never guess one from the git remote.**
@@ -228,11 +228,9 @@ git fetch origin && git checkout "$BR" && git pull origin "$BR"
 
 > Plan generation/revision live in `/fabrio:generate-plan` and `/fabrio:revise-plan`, not here — this skill only changes files in a repo (enforced by the Step 3 mode guard).
 
-Follow the plan. Read adjacent files and match existing patterns exactly. For DB changes: new numbered migration in `supabase/migrations/` + update `supabase/schema.sql`. Type-check with `npx tsc --noEmit` while developing; commit logical units (`npm run build` is the Step 9 gate).
+Follow the plan. Read adjacent files and match existing patterns exactly — including the repo's own conventions in its `CLAUDE.md`/`AGENTS.md` and its DB-migration workflow. Type-check and build with the repo's own commands while developing; commit logical units (the build is the Step 9 gate).
 
 **Sub-skills — invoke when applicable:** `/frontend-design`, `/react-best-practices`, `/web-design-guidelines`, `/composition-patterns`, `/ux-review`.
-
-**Fabrio conventions:** dark mode only (`zinc-950` → `zinc-900` → `zinc-800`); success `emerald-400`, destructive `rose-400`; API routes follow `app/api/sites/` & `app/api/tasks/`; hooks follow the SWR pattern in `hooks/useSites.ts`; all DB changes need a numbered migration + schema.sql update.
 
 ---
 

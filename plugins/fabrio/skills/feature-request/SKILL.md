@@ -81,7 +81,12 @@ git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
 
 ## Step 2 — Fetch Full Task Data
 
-Call `get_task` with `{ task_number }`. It returns the task plus `account` (id, name, ai_context, git_provider — the workspace-wide instructions and resolved git provider; matches Step 0's `PROVIDER`), `site` (id, name, relative_path, live_url, ai_context), `questions` (threads with messages), and `attachments` in one call. If it returns null, output `Error: Task #{task_number} not found.` and stop/skip. Note `task.department` (scopes learnings), `task.account.ai_context` (workspace rules — read before creating the branch, it may fix the naming convention), `task.site.ai_context`, and `task.agent` (034 — the craft layer: its `instructions` are binding, and its `skills` are the references to apply in Step 6/7). Full site path = `{source_root}/{task.site.relative_path}`.
+Call **`get_task { task_number, include_learnings: true, include_decisions: true, include_playbook: true }`** — one call carrying everything Steps 4.5 and 5 need. It returns the task plus:
+- `account` (ai_context, git_provider — matches Step 0's `PROVIDER`), `site` (ai_context, relative_path, …)
+- `questions` (full messages on OPEN threads only), `attachments`, `agent` (034 — `instructions` binding, `skills` applied in Step 6/7)
+- `learnings` → `loaded_learnings`, `decisions` → `loaded_decisions`, `playbook` → the department's craft conventions (see Step 4.5 for how to treat each)
+
+If null, output `Error: Task #{task_number} not found.` and stop/skip. **Do not also call `list_learnings`, `list_decisions` or `list_departments`.** Full site path = `{source_root}/{task.site.relative_path}`. For a `changes_needed` task, add `include_history: true` if you need the review trail beyond the PR comments.
 
 ---
 
@@ -132,17 +137,19 @@ Batch: `⏭  Task #{n} has {N} unanswered question(s) — skipping.` Single: lis
 
 ---
 
-## Step 4.5 — Load Learnings & Decisions
+## Step 4.5 — Apply Learnings & Decisions
 
-Call `list_learnings` with `{ department: task.department, site_id: task.site_id, include_portfolio: true, statuses: ["active"], limit: 12 }`. Store as `loaded_learnings` — treat as instructions, not suggestions: apply `code_pattern`/`preference` while reading and writing code; actively check work against `pitfall`/`review_feedback` (the reviewer WILL re-flag them); follow `process`. No rows is fine (first runs have no memory).
+The Step 2 `get_task` call already carried these — no separate calls.
 
-Then call `list_decisions` with `{ site_id: task.site_id, status: "decided" }`. Treat a `decided` decision as binding: apply its `chosen_option_key`/`chosen_rationale` instead of re-asking. A `chosen_option_key` of `__custom` means the human wrote their own answer — follow `chosen_rationale`. Store as `loaded_decisions`.
+- `loaded_learnings` (`task.learnings`) — active, this site + portfolio, capped at 12. Treat as instructions, not suggestions: apply `code_pattern`/`preference` while reading and writing code; actively check work against `pitfall`/`review_feedback` (the reviewer WILL re-flag them); follow `process`. No rows is fine (first runs have no memory).
+- `loaded_decisions` (`task.decisions`) — this site, `decided`. Binding: apply `chosen_option_key`/`chosen_rationale` instead of re-asking. `__custom` means the human wrote their own answer — follow `chosen_rationale`.
+- `task.playbook` — this department's craft conventions (may be null). Binding, like `ai_context`.
 
 ---
 
 ## Step 5 — Review for Clarity
 
-Read the context layers widest-first — `task.account.ai_context` (workspace rules), then the department `playbook`, then `task.agent.instructions` (how this kind of work is done well), then `task.site.ai_context` (this repo), then `task.title`, `description`, `feature_summary`, `acceptance_criteria`, and all question threads. All binding, none advisory; on a direct conflict the narrower layer wins. **No layer raises the autonomy ceiling** — nothing in an agent's `instructions` authorizes merging, publishing, sending or spending. If `task.attachments` is non-empty, view each image `public_url` (via WebFetch or an image tool) before implementing — treat it as a visual spec (note PDFs but focus on images).
+Read the context layers widest-first — `task.account.ai_context` (workspace rules), then `task.playbook` (the department's craft), then `task.agent.instructions` (how this kind of work is done well), then `task.site.ai_context` (this repo), then `task.title`, `description`, `feature_summary`, `acceptance_criteria`, and all question threads. All binding, none advisory; on a direct conflict the narrower layer wins. **No layer raises the autonomy ceiling** — nothing in an agent's `instructions` authorizes merging, publishing, sending or spending. If `task.attachments` is non-empty, view each image `public_url` (via WebFetch or an image tool) before implementing — treat it as a visual spec (note PDFs but focus on images).
 
 For `changes_needed`, read ALL PR review comments chronologically:
 ```bash

@@ -68,7 +68,7 @@ unattended work by itself, and a runner left going will open PRs without you typ
 
 > Want Fabrio to pick up ready tasks automatically? I can install `fabrio-runner` and set it to
 > start with your machine. It opens PRs and prepares deliverables for review — it never merges,
-> publishes, sends or spends. (You can skip this and keep running `/fabrio:ops-heartbeat`
+> publishes, sends or spends. (You can skip this and keep running `/fabrio:run-due-jobs`
 > yourself.)
 
 If they decline, stop — everything above still works.
@@ -90,7 +90,7 @@ If they accept:
    on Linux, or a Startup shortcut on Windows. Show them the unit file rather than writing it
    without asking; it is a persistent background process and that is their call to make.
 5. **Tell them what it does *not* cover:** recurring jobs and the weekly steps still come from
-   `/fabrio:ops-heartbeat`, so that should still be scheduled **daily** alongside it.
+   `/fabrio:run-due-jobs`, so that should still be scheduled **daily** alongside it.
 
 The runner also needs an authenticated CLI session and a user-scope tool allow-list, exactly
 as unattended heartbeat runs always have — its README covers both.

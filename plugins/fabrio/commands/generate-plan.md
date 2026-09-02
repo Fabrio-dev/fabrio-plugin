@@ -160,6 +160,6 @@ Per site: {site name} {n}, {site name} {n}, all sites {n}
 Review and queue tasks at /plans/{plan.id}. To evolve the plan later, run /fabrio:revise-plan {plan_number}.
 ```
 
-Every **recurring** initiative needs its steps authored before it can run — tell the user: `/fabrio:plan-job {item_number}` (the job's `#N`, shown on the job in the plan UI). The ops heartbeat also does this automatically for any job with a description and no procedure.
+Every **recurring** initiative needs its steps authored before it can run — tell the user: `/fabrio:plan-job {item_number}` (the job's `#N`, shown on the job in the plan UI). The due-jobs run also does this automatically for any job with a description and no procedure.
 
 If any initiative is `execution_mode: "external"`, say so plainly — Fabrio will prepare a ready-to-execute package for each, but **the human performs the action**; those items never publish, send or spend on their own.

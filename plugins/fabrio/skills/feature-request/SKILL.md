@@ -9,7 +9,7 @@ description: "Implements feature request tasks end-to-end — single task or all
 
 - Invoke Fabrio workflows by skill name (for example, `$fabrio:execute-task 42`). Natural-language requests that clearly name the workflow are equivalent.
 - Never invoke the Claude CLI. When this workflow calls for a headless child or delegated Fabrio workflow, delegate the named `$fabrio:*` skill to a Codex sub-agent with the same arguments, working directory, safety gates, and requested model tier when available; wait for it and inspect Fabrio state afterward. If agent delegation is unavailable, run the referenced skill inline.
-- For unattended or recurring operation, use a Codex automation whose prompt invokes `$fabrio:ops-heartbeat`. A plugin install does not create or enable an automation automatically.
+- For unattended or recurring operation, use a Codex automation whose prompt invokes `$fabrio:run-due-jobs`. A plugin install does not create or enable an automation automatically.
 - Fabrio MCP access is configured separately. If it is missing, direct the user to set `FABRIO_API_KEY`, run `codex mcp add fabrio --url https://fabrio.dev/api/mcp --bearer-token-env-var FABRIO_API_KEY`, then restart Codex and open a new task.
 - Preserve every workflow safety boundary below: open PRs but never merge without the explicit merge workflow, prepare external actions but never perform them, and use durable Fabrio questions/receipts instead of prompting from delegated or automated work.
 
@@ -68,9 +68,9 @@ Task history: use `log_task_history` for semantic milestones. Routine field edit
 
 **Batch mode** (no number): fetch all workable repo tasks with `list_tasks` — `{ execution_mode: "repo", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }`. This skill implements **repo work** — anything whose deliverable is files in a site repo, whatever department owns it (a marketing landing page and a content blog post both qualify). Tasks in `artifact`/`external` mode produce a deliverable instead and belong to `$fabrio:execute-task`; a task with **no mode set** hasn't been classified yet, so it also goes through `$fabrio:execute-task` first. If none, output "No tasks are currently available to work on." and stop. Otherwise list them, then run **Steps 2–12 for each in order**, returning here after each.
 
-Accept an optional **`--delegated`** flag anywhere in the arguments. `$fabrio:ops-heartbeat` passes it when it dispatches this skill directly, and `$fabrio:execute-task`'s own delegation to this skill (its Step 8, always a `delegate the referenced $fabrio:* skill to a Codex sub-agent` child regardless of how `execute-task` itself was invoked) passes it unconditionally too. A human typing `$fabrio:feature-request {n}` directly normally doesn't set it. The flag changes nothing here — it only gates how Step 5 handles a clarification question.
+Accept an optional **`--delegated`** flag anywhere in the arguments. `fabrio-runner` passes it when it dispatches this skill directly, and `$fabrio:execute-task`'s own delegation to this skill (its Step 8, always a `delegate the referenced $fabrio:* skill to a Codex sub-agent` child regardless of how `execute-task` itself was invoked) passes it unconditionally too. A human typing `$fabrio:feature-request {n}` directly normally doesn't set it. The flag changes nothing here — it only gates how Step 5 handles a clarification question.
 
-> **Model routing note:** batch mode runs every task in the current session's model — it does not switch per task. Tier-aware routing is `$fabrio:ops-heartbeat`'s job (it dispatches each task as its own delegated `$fabrio:feature-request {n}` on the resolved model). Step 5.5 still classifies unset tiers so those runs route correctly.
+> **Model routing note:** batch mode runs every task in the current session's model — it does not switch per task. Tier-aware routing is `fabrio-runner`'s job (it dispatches each task as its own delegated Codex agent on the resolved model). Step 5.5 still classifies unset tiers so those runs route correctly.
 
 Before starting each task, reset git to a clean base inside that task's repo:
 ```bash

@@ -9,7 +9,7 @@ description: "Executes any task in any department end-to-end — ships repo work
 
 - Invoke Fabrio workflows by skill name (for example, `$fabrio:execute-task 42`). Natural-language requests that clearly name the workflow are equivalent.
 - Never invoke the Claude CLI. When this workflow calls for a headless child or delegated Fabrio workflow, delegate the named `$fabrio:*` skill to a Codex sub-agent with the same arguments, working directory, safety gates, and requested model tier when available; wait for it and inspect Fabrio state afterward. If agent delegation is unavailable, run the referenced skill inline.
-- For unattended or recurring operation, use a Codex automation whose prompt invokes `$fabrio:ops-heartbeat`. A plugin install does not create or enable an automation automatically.
+- For unattended or recurring operation, use a Codex automation whose prompt invokes `$fabrio:run-due-jobs`. A plugin install does not create or enable an automation automatically.
 - Fabrio MCP access is configured separately. If it is missing, direct the user to set `FABRIO_API_KEY`, run `codex mcp add fabrio --url https://fabrio.dev/api/mcp --bearer-token-env-var FABRIO_API_KEY`, then restart Codex and open a new task.
 - Preserve every workflow safety boundary below: open PRs but never merge without the explicit merge workflow, prepare external actions but never perform them, and use durable Fabrio questions/receipts instead of prompting from delegated or automated work.
 
@@ -59,9 +59,9 @@ Task history: use `log_task_history` for semantic milestones. Routine field edit
 
 **Batch mode** (no number): `list_tasks { statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }` — **no type or department filter; every department's work is in scope.** Sort `changes_needed` before `ready` (review feedback first). If none, output "No tasks are currently available to work on." and stop. Otherwise list them, then run **Steps 2–10 for each in order**, returning here after each.
 
-Accept an optional **`--delegated`** flag anywhere in the arguments (e.g. `$fabrio:execute-task 42 --delegated`). `$fabrio:ops-heartbeat` always passes it; a human typing the command directly normally doesn't. It changes nothing here — it only gates how Step 5 handles a clarification question.
+Accept an optional **`--delegated`** flag anywhere in the arguments (e.g. `$fabrio:execute-task 42 --delegated`). `fabrio-runner` always passes it; a human typing the command directly normally doesn't. It changes nothing here — it only gates how Step 5 handles a clarification question.
 
-> **Model routing note:** batch mode runs every task in the current session's model. Tier-aware routing is `$fabrio:ops-heartbeat`'s job (it dispatches each task as its own delegated Codex agent on the tier's model). Step 5.5 still classifies unset tiers so those runs route correctly.
+> **Model routing note:** batch mode runs every task in the current session's model. Tier-aware routing is `fabrio-runner`'s job (it dispatches each task as its own delegated Codex agent on the tier's model). Step 5.5 still classifies unset tiers so those runs route correctly.
 
 ---
 
@@ -173,7 +173,7 @@ Then `create_task_question { task_id: task.id, content: "{one-line framing}", de
 
 Then skip (batch) / stop (single). Batch: `⏭  Task #{n} — clarification needed. Question posted. Moving on.` Single: `Paused: clarification needed … answer in the Questions tab, then re-run.`
 
-> **`--delegated` means never prompt interactively.** With that flag set — always true when `$fabrio:ops-heartbeat` dispatched this run — there is no one to answer a chat prompt, so (a)/(b) above are the *only* way to raise a clarification: record it with `create_task_question`/`create_decision`, then skip/stop as just described. **Without `--delegated`** (a human invoked this directly), asking the question in chat instead is fine — that's today's behavior and it's unchanged; posting it via `create_task_question` is equally fine when you'd rather leave a record.
+> **`--delegated` means never prompt interactively.** With that flag set — always true when `fabrio-runner` dispatched this run — there is no one to answer a chat prompt, so (a)/(b) above are the *only* way to raise a clarification: record it with `create_task_question`/`create_decision`, then skip/stop as just described. **Without `--delegated`** (a human invoked this directly), asking the question in chat instead is fine — that's today's behavior and it's unchanged; posting it via `create_task_question` is equally fine when you'd rather leave a record.
 
 ---
 

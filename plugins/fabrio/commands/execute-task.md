@@ -246,10 +246,15 @@ you have written the deliverable is too late to change it.
 
 ### mode `repo` → delegate
 
-Do **not** reimplement branch/build/PR mechanics. Dispatch:
+Do **not** reimplement branch/build/PR mechanics. Resolve the model first, then dispatch:
+
+- **Model:** `get_model_tiers` → map `task.difficulty` (default `standard` if still null) to its
+  model. This grandchild is the process that actually writes the code, and `--model` is fixed at
+  spawn — without it the code is written on the CLI default regardless of the task's tier, so a
+  `light` task never gets the cheap model and a `heavy` one never gets the strong one.
 
 ```bash
-claude -p "/fabrio:feature-request {task_number} --headless" --permission-mode acceptEdits --allowedTools "{comma-joined task.agent.allowed_tools}"
+claude -p "/fabrio:feature-request {task_number} --headless" --model "{tier model}" --permission-mode acceptEdits --allowedTools "{comma-joined task.agent.allowed_tools}"
 ```
 
 **Pass the agent's tool scope through.** `--allowedTools` is fixed when a process spawns, so a

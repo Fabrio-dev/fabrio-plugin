@@ -9,7 +9,7 @@ description: "Runs one cycle of a recurring job — walks its saved step tree to
 
 - Invoke Fabrio workflows by skill name (for example, `$fabrio:execute-task 42`). Natural-language requests that clearly name the workflow are equivalent.
 - Never invoke the Claude CLI. When this workflow calls for a headless child or delegated Fabrio workflow, delegate the named `$fabrio:*` skill to a Codex sub-agent with the same arguments, working directory, safety gates, and requested model tier when available; wait for it and inspect Fabrio state afterward. If agent delegation is unavailable, run the referenced skill inline.
-- For unattended or recurring operation, use a Codex automation whose prompt invokes `$fabrio:ops-heartbeat`. A plugin install does not create or enable an automation automatically.
+- For unattended or recurring operation, use a Codex automation whose prompt invokes `$fabrio:run-due-jobs`. A plugin install does not create or enable an automation automatically.
 - Fabrio MCP access is configured separately. If it is missing, direct the user to set `FABRIO_API_KEY`, run `codex mcp add fabrio --url https://fabrio.dev/api/mcp --bearer-token-env-var FABRIO_API_KEY`, then restart Codex and open a new task.
 - Preserve every workflow safety boundary below: open PRs but never merge without the explicit merge workflow, prepare external actions but never perform them, and use durable Fabrio questions/receipts instead of prompting from delegated or automated work.
 
@@ -19,7 +19,7 @@ Execute one cycle of a recurring **job**: walk its saved **step tree** to read t
 
 **A run that files zero tasks is a successful run.** An empty source, or everything already covered by an open task, records `0 items` and stops. Never invent work to fill a run.
 
-**Invocation:** `$fabrio:run-job <item_number>` — the job's human id (`#N`). Also dispatched automatically by `$fabrio:ops-heartbeat` for due jobs.
+**Invocation:** `$fabrio:run-job <item_number>` — the job's human id (`#N`). Also dispatched automatically by `$fabrio:run-due-jobs` for due jobs.
 
 ---
 
@@ -73,7 +73,7 @@ If the **Gather** step's `instructions` open with a resource line — `resource:
 
 3. **On success**, call `record_resource_check { resource_id, status: "ok" }` and continue. This is the only way the Fabrio UI ever learns this machine can reach the resource — the browser can't see your local MCP servers or credentials file.
 
-4. **On failure, stop cleanly. Never prompt** — `$fabrio:ops-heartbeat` dispatches this skill through Codex agent delegation and a prompt would hang the whole cycle. Make the calls below, then report and stop:
+4. **On failure, stop cleanly. Never prompt** — `$fabrio:run-due-jobs` dispatches this skill through Codex agent delegation and a prompt would hang the whole cycle. Make the calls below, then report and stop:
    - `record_resource_check { resource_id, status: "unreachable" | "unauthenticated", detail: "<one line + the exact fix>" }`
    - in step mode, `record_job_step { run_id, job_step_id: <the preflight step>, status: "failed", summary: "<provider> unreachable" }`
    - `record_generator_run { plan_item_id: id, run_id, items_found: 0, tasks_created: 0, status: "failed", failed_step_id: <the preflight step>, summary: "Source unavailable: <provider> — <detail>" }`
@@ -142,7 +142,7 @@ Each call creates `ready` task(s) linked back to this job. Dedup against `open_t
 | one **iteration** of a foreach | record that iteration `failed` and **continue the loop**. One bad item must not cost you the other nine tasks. |
 | the **source**, mid-run (expired OAuth, rate limit, revoked key) | treat as a root-step failure, and also `record_resource_check` with the real status, as in Step 1.5 §4. |
 
-Never prompt — `$fabrio:ops-heartbeat` dispatches this skill through Codex agent delegation. Every exit is a durable artifact.
+Never prompt — `$fabrio:run-due-jobs` dispatches this skill through Codex agent delegation. Every exit is a durable artifact.
 
 ---
 
@@ -156,7 +156,7 @@ The job has no `create_task` step, so its procedure predates the plan/execute sp
 **`advance_cadence: false` is not optional.** `queue_plan_item_task` already moved `next_run_at`; without the flag the cadence advances twice and the job silently skips a whole period.
 
 Then say so in the output:
-> ⚠️  This job's steps predate the plan/execute split, so they were not run. It queued one task from its description instead. Re-author it with `$fabrio:plan-job {item_number}` — the ops heartbeat will also do this automatically on its next cycle.
+> ⚠️  This job's steps predate the plan/execute split, so they were not run. It queued one task from its description instead. Re-author it with `$fabrio:plan-job {item_number}` — the due-jobs run will also do this automatically on its next cycle.
 
 ---
 

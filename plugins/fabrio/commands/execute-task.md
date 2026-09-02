@@ -50,9 +50,9 @@ Task history: use `log_task_history` for semantic milestones. Routine field edit
 
 **Batch mode** (no number): `list_tasks { statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }` — **no type or department filter; every department's work is in scope.** Sort `changes_needed` before `ready` (review feedback first). If none, output "No tasks are currently available to work on." and stop. Otherwise list them, then run **Steps 2–10 for each in order**, returning here after each.
 
-Accept an optional **`--headless`** flag anywhere in the arguments (e.g. `/fabrio:execute-task 42 --headless`). `/fabrio:ops-heartbeat` always passes it; a human typing the command directly normally doesn't. It changes nothing here — it only gates how Step 5 handles a clarification question.
+Accept an optional **`--headless`** flag anywhere in the arguments (e.g. `/fabrio:execute-task 42 --headless`). `fabrio-runner` always passes it; a human typing the command directly normally doesn't. It changes nothing here — it only gates how Step 5 handles a clarification question.
 
-> **Model routing note:** batch mode runs every task in the current session's model. Tier-aware routing is `/fabrio:ops-heartbeat`'s job (it dispatches each task as its own headless child on the tier's model). Step 5.5 still classifies unset tiers so those runs route correctly.
+> **Model routing note:** batch mode runs every task in the current session's model. Tier-aware routing is `fabrio-runner`'s job (it dispatches each task as its own headless child on the tier's model). Step 5.5 still classifies unset tiers so those runs route correctly.
 
 ---
 
@@ -164,7 +164,7 @@ Then `create_task_question { task_id: task.id, content: "{one-line framing}", de
 
 Then skip (batch) / stop (single). Batch: `⏭  Task #{n} — clarification needed. Question posted. Moving on.` Single: `Paused: clarification needed … answer in the Questions tab, then re-run.`
 
-> **`--headless` means never prompt interactively.** With that flag set — always true when `/fabrio:ops-heartbeat` dispatched this run — there is no one to answer a chat prompt, so (a)/(b) above are the *only* way to raise a clarification: record it with `create_task_question`/`create_decision`, then skip/stop as just described. **Without `--headless`** (a human invoked this directly), asking the question in chat instead is fine — that's today's behavior and it's unchanged; posting it via `create_task_question` is equally fine when you'd rather leave a record.
+> **`--headless` means never prompt interactively.** With that flag set — always true when `fabrio-runner` dispatched this run — there is no one to answer a chat prompt, so (a)/(b) above are the *only* way to raise a clarification: record it with `create_task_question`/`create_decision`, then skip/stop as just described. **Without `--headless`** (a human invoked this directly), asking the question in chat instead is fine — that's today's behavior and it's unchanged; posting it via `create_task_question` is equally fine when you'd rather leave a record.
 
 ---
 

@@ -9,7 +9,7 @@ description: "Implements a set of dependent feature tasks on one shared branch �
 
 - Invoke Fabrio workflows by skill name (for example, `$fabrio:execute-task 42`). Natural-language requests that clearly name the workflow are equivalent.
 - Never invoke the Claude CLI. When this workflow calls for a headless child or delegated Fabrio workflow, delegate the named `$fabrio:*` skill to a Codex sub-agent with the same arguments, working directory, safety gates, and requested model tier when available; wait for it and inspect Fabrio state afterward. If agent delegation is unavailable, run the referenced skill inline.
-- For unattended or recurring operation, use a Codex automation whose prompt invokes `$fabrio:ops-heartbeat`. A plugin install does not create or enable an automation automatically.
+- For unattended or recurring operation, use a Codex automation whose prompt invokes `$fabrio:run-due-jobs`. A plugin install does not create or enable an automation automatically.
 - Fabrio MCP access is configured separately. If it is missing, direct the user to set `FABRIO_API_KEY`, run `codex mcp add fabrio --url https://fabrio.dev/api/mcp --bearer-token-env-var FABRIO_API_KEY`, then restart Codex and open a new task.
 - Preserve every workflow safety boundary below: open PRs but never merge without the explicit merge workflow, prepare external actions but never perform them, and use durable Fabrio questions/receipts instead of prompting from delegated or automated work.
 
@@ -70,7 +70,7 @@ The arguments are one chain, **in the order given** = the build order. `get_task
 Fetch workable tasks with `list_tasks { execution_mode: "repo", statuses: ["ready", "changes_needed"], is_blocked: false, order: "asc" }` (add `site_id` when `--site` is given; resolve a site **name** to its id via `list_sites` first). **Only `repo` tasks can be chained** — a chain *is* a shared git branch, so a deliverable or an external action has nothing to build on. Department doesn't matter: a marketing landing page and a content blog post chain like any other repo work. Non-repo and unclassified tasks belong to `$fabrio:execute-task`. If none, output "No tasks are currently available to chain." and stop.
 
 ### `--delegated`
-Accept this flag anywhere in the arguments (e.g. `$fabrio:feature-chain --site 3 --delegated`). `$fabrio:ops-heartbeat` always passes it on its dispatch (see below); a human typing the command directly normally doesn't. Set **HEADLESS = true** for this run if the flag is present — Step 3e reads this to decide how to raise a clarification question. (A `--step {n}` child sets its own HEADLESS unconditionally — see that section — since it skips this Step entirely.)
+Accept this flag anywhere in the arguments (e.g. `$fabrio:feature-chain --site 3 --delegated`). `fabrio-runner` always passes it on its dispatch (see below); a human typing the command directly normally doesn't. Set **HEADLESS = true** for this run if the flag is present — Step 3e reads this to decide how to raise a clarification question. (A `--step {n}` child sets its own HEADLESS unconditionally — see that section — since it skips this Step entirely.)
 
 **Group per `site_id`, then within each site cluster tasks into chains.** Chain two tasks only when there's **real evidence** one builds on the other, in priority order:
 

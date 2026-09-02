@@ -192,5 +192,5 @@ Source: {how it gathers work — e.g. "Jira project ABC via MCP"}
 Files:  {"up to {N} tasks/run, deduped against open ones" | "one task/run"}
 Each task {repo: "ships files in the repo and opens a PR" | artifact: "produces a markdown deliverable" | external: "prepares a package — you perform the action"}.
 
-Run it now with /fabrio:run-job {item_number} — or let the ops heartbeat run it on schedule.
+Run it now with /fabrio:run-job {item_number} — or let the due-jobs run run it on schedule.
 ```

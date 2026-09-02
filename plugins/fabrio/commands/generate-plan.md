@@ -20,6 +20,17 @@ All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) 
 
 Call `get_plan { plan_number, include_items: true, include_attachments: true }`. Store as `plan`; capture `plan.id` (the UUID) — the item-writing tools use it. The plan is a cross-department **objective** (`plan.title`, e.g. "Improve SEO") — no department on the plan itself; you assign a department to each item. If null, tell the user the plan number wasn't found. If the plan already has items, warn that `/fabrio:generate-plan` replaces them and suggest `/fabrio:revise-plan` for incremental updates — proceed only on a full regeneration.
 
+### Resolve the plan's TARGET SITES
+
+**A plan targets a set of sites, not one site.** Build that list now and store it as `targets` — everything downstream reads it:
+
+- `plan.all_sites === true` → call `list_sites` and take every site whose `status` is `active`.
+- otherwise → `plan.plan_sites[].site` (each carries `id`, `name`, `relative_path`, `live_url`, `description`, `ai_context`). If that array is empty, fall back to the single `plan.site`.
+
+Do **not** use `plan.site` / `plan.site_id` as "the plan's site" — it is a legacy pointer at the *first* site and is `null` on an all-sites plan.
+
+Say the target list back to the user before you generate, e.g. `Plan #12 "Improve SEO" targets 3 sites: Acme App, Acme Marketing, Acme Docs.`
+
 ---
 
 ## Step 2 — Load Workspace Context, Departments, Learnings & Sibling Sites
@@ -28,9 +39,9 @@ Call `get_account_context` first — the workspace's own `ai_context`: portfolio
 
 Then call `list_departments` — it returns each department's `slug`, `description` and `playbook`. Use the slugs as the valid set for `department` (never hardcode them) and let each `description` guide which items belong where. A department's `playbook`, when present, is how that department actually works here — respect it when shaping its initiatives.
 
-Call `list_learnings { site_id: plan.site_id, include_portfolio: true, statuses: ["active"], limit: 20 }` (all departments — the objective spans several). Apply `preference`/`process` learnings to the plan's direction; treat `pitfall`/`review_feedback` as things to avoid. When generating an item for a department, weight that department's learnings most.
+Call `list_learnings { site_id: "{target.id}", include_portfolio: true, statuses: ["active"], limit: 20 }` **once per site in `targets`** (all departments — the objective spans several). Keep them grouped by site: a learning about Acme Marketing has no bearing on an initiative you pin to Acme App. Apply `preference`/`process` learnings to the plan's direction; treat `pitfall`/`review_feedback` as things to avoid. When generating an item for a department, weight that department's learnings most.
 
-Also call `list_sites` to see the account's other codebases. A single product often spans repos — e.g. an app and its **public marketing site**. If the objective needs work in a sibling site (marketing/content items usually land on the public site, not the app), note that site's `id`; you'll set it as the item's `site_id` in Step 3 so the queued task targets the right repo.
+Also call `list_sites` to see codebases **outside** the plan's target set. A single product often spans repos — e.g. an app and its **public marketing site**. If the objective needs work in a sibling site the plan doesn't itself target, note that site's `id`; you can still set it as an item's `site_id` in Step 3, and the queued task targets that repo.
 
 ---
 
@@ -47,7 +58,7 @@ Treat these as authoritative user context — they take precedence over generic 
 
 ## Step 3 — Generate Initiatives
 
-Read the workspace instructions (from Step 2), then the site context (`plan.site.name`, `description` if present, `live_url`, `ai_context`) plus the objective (`plan.title`), `plan.goals`, `plan.target_audience`, and the reference documents. Decide **which departments the objective needs** and generate **6–12 initiatives spanning them**. Example — "Improve SEO" typically needs content (articles/copy), design (CWV, internal-linking UI), development (schema markup, sitemaps, performance), marketing (backlink outreach). Only include a department the objective genuinely needs.
+Read the workspace instructions (from Step 2), then the context of **each site in `targets`** (`name`, `description` if present, `live_url`, `ai_context`) plus the objective (`plan.title`), `plan.goals`, `plan.target_audience`, and the reference documents. Decide **which departments the objective needs** and generate **6–12 initiatives spanning them**. Example — "Improve SEO" typically needs content (articles/copy), design (CWV, internal-linking UI), development (schema markup, sitemaps, performance), marketing (backlink outreach). Only include a department the objective genuinely needs.
 
 ### An item is an INITIATIVE, not a STAGE
 
@@ -63,6 +74,18 @@ Before you emit an item, ask: **would someone schedule this on its own, and woul
 1. A `depends_on` chain is longer than two links.
 2. Every link is `one_time` but the last link is recurring.
 3. The last item's `description` restates what the earlier items do.
+
+### Every initiative names ONE site
+
+An objective can span several repos; **an initiative almost never does.** Before you emit an item, ask: **which one codebase does this actually land in?** Read the target sites' `name`, `description`, `live_url` and `ai_context` — that is what tells you whether "rewrite the pricing copy" belongs to the marketing site or the app. Set that site's `id` as the item's `site_id`. The item then files **one** task, in that repo.
+
+**`all_plan_sites: true` is the rare case.** Use it only when the item is genuinely *the same job repeated per repo* — add a `robots.txt` to each, bump a shared dependency everywhere, apply one security header across the portfolio. The item then fans out into one task per targeted site.
+
+**The reuse test.** Would the finished work on site A be usable as-is on site B? If no, it is not one fan-out item — it is **separate items, one per site**, each with its own `site_id` and its own title. Three sites needing three different landing pages is three initiatives, not one.
+
+**On a plan targeting more than one site, an item carrying neither `site_id` nor `all_plan_sites: true` is REJECTED** by `replace_plan_items`, with the offending titles named. There is no accidental default: decide for every item. (On a single-site plan neither field is needed — the one site is unambiguous.)
+
+**Sizing.** 6–12 initiatives is the budget for the *plan*, not per site. A plan across 3 sites is still 6–12 items total; pin them where the work lands rather than mirroring the same list three times.
 
 **Self-check before Step 4.** Read your item list back. For each recurring item, ask: *does any other item describe a stage of this one?* If so, delete that item and fold its detail into the recurring item's `description`. Then confirm no `depends_on` chain exceeds two links and no recurring item has one at all.
 
@@ -87,7 +110,8 @@ Each initiative:
 - `depends_on` — **optional** integer: the `sort_order` of a prerequisite item. Sequences genuinely **independent** initiatives; auto-queue skips a dependent item until its prerequisite is `done`. Omit for independent items, and never set it on a recurring one (see the pipeline test above).
 
 **For every RECURRING item, make the `description` a clear, natural-language account of the WHOLE flow** — the source (API, ticket system, MCP, analytics), how to pick what to work on, and what it produces (e.g. "Each week, pull open bugs from the team's tracker, take the top 5 by severity, and file a ticket for each"). `/fabrio:plan-job` later compiles that description into the job's nested step tree — steps that plan the work and file a task, never steps that do the work themselves. **Its stages are steps of this one item — never sibling items.**
-- `site_id` — **optional**: a sibling site's `id` (from Step 2's `list_sites`) when this initiative belongs to a **different** codebase than the plan's site — e.g. a marketing item for the public site while the plan is on the app. Omit to inherit the plan's site (the common case). The queued task is created against this site's repo, so cross-site sequencing works (e.g. a public-site page that `depends_on` an app feature).
+- `site_id` — **which site this initiative lands in**, an `id` from `targets` (or from `list_sites` for a sibling repo the plan doesn't target). The queued task is created against that site's repo, so cross-site sequencing works — e.g. a public-site page that `depends_on` an app feature. **Set this on nearly every item.**
+- `all_plan_sites` — `true` **instead of** `site_id`, for work that must be repeated in every targeted repo. Required to fan out on a multi-site plan; unnecessary on a single-site one. See *Every initiative names ONE site* above.
 
 **Category suggestions** (hints): marketing → seo, social, email, content, paid · development → feature, refactor, infra, bugfix, performance · design → visual, ux, design-system, branding · content → blog, landing, docs, email, social.
 
@@ -97,14 +121,16 @@ Each initiative:
 
 Call `replace_plan_items { plan_id: plan.id, items: [ … ], change_summary: "Initial generation" }`. This bulk-replaces the plan's items, marks the plan `active`, and records an **accepted** revision snapshot. Uses `plan.id` (the UUID), not the plan number.
 
+Most items carry a `site_id`; the fan-out one carries `all_plan_sites: true`. If the call is rejected for an item with no target site, that is the guard from Step 3 — go back, decide where that initiative lands, and re-send. Do not blanket-set `all_plan_sites` to get past it.
+
 ```
 replace_plan_items {
   plan_id: "{plan.id}",
   items: [
-    { department: "content",     title: "…", description: "…", category: "blog",   frequency: "monthly",  priority: "high",   difficulty: "light",    execution_mode: "repo",     sort_order: 0 },
-    { department: "development", title: "…", description: "…", category: "infra",  frequency: "one_time", priority: "medium", difficulty: "standard", execution_mode: "repo",     sort_order: 1 },
-    { department: "marketing",   title: "…", description: "…", category: "social", frequency: "weekly",   priority: "medium", difficulty: "light",    execution_mode: "external", sort_order: 2 },
-    { department: "content",     title: "…", description: "…", category: "seo",    frequency: "one_time", priority: "high",   difficulty: "standard", execution_mode: "artifact", sort_order: 3 }
+    { department: "content",     title: "…", description: "…", category: "blog",   frequency: "monthly",  priority: "high",   difficulty: "light",    execution_mode: "repo",     site_id: "{marketing_site_id}", sort_order: 0 },
+    { department: "development", title: "…", description: "…", category: "infra",  frequency: "one_time", priority: "medium", difficulty: "standard", execution_mode: "repo",     site_id: "{app_site_id}",       sort_order: 1 },
+    { department: "marketing",   title: "…", description: "…", category: "social", frequency: "weekly",   priority: "medium", difficulty: "light",    execution_mode: "external", site_id: "{marketing_site_id}", sort_order: 2 },
+    { department: "development", title: "Add security headers to every site", description: "…", category: "infra", frequency: "one_time", priority: "medium", difficulty: "light", execution_mode: "repo", all_plan_sites: true, sort_order: 3 }
   ],
   change_summary: "Initial generation"
 }
@@ -114,20 +140,22 @@ replace_plan_items {
 
 ## Step 5 — Retrospective
 
-Record 0–3 generalizable learnings (same rules as feature-request Step 11.5: recording nothing is valid; no task recaps). Reflect: what about this site's positioning/audience or codebase wasn't in the workspace or site `ai_context`? Did generating this plan reveal a durable preference? Dedup against Step 2 — `reinforce_learning { learning_id }` rather than inserting a restatement. Each learning carries the department it concerns, scoped to the site: `record_learning { site_id: plan.site_id, department: "{department_it_concerns}", category, title, content }`.
+Record 0–3 generalizable learnings (same rules as feature-request Step 11.5: recording nothing is valid; no task recaps). Reflect: what about a target site's positioning/audience or codebase wasn't in the workspace or site `ai_context`? Did generating this plan reveal a durable preference? Dedup against Step 2 — `reinforce_learning { learning_id }` rather than inserting a restatement. Each learning carries the department it concerns and **the site it concerns** — the one whose context it is about, not the plan's legacy pointer: `record_learning { site_id: "{site_it_concerns}", department: "{department_it_concerns}", category, title, content }`. Pass `site_id: null` for something true of the whole portfolio.
 
 ---
 
 ## Step 6 — Output Summary
 
 ```
-✅ Plan generated: "{plan.title}" for {plan.site.name}
+✅ Plan generated: "{plan.title}" — {S} site(s): {target site names}
 
 {N} initiatives across {D} departments (accepted as revision #1):
-• [content]     {title} — {frequency} · {execution_mode}
-• [design]      {title} — {frequency} · {execution_mode}
-• [development] {title} — {frequency} · {execution_mode}
+• [content]     {title} — {site name} · {frequency} · {execution_mode}
+• [design]      {title} — {site name} · {frequency} · {execution_mode}
+• [development] {title} — all {S} sites · {frequency} · {execution_mode}
 ...
+
+Per site: {site name} {n}, {site name} {n}, all sites {n}
 
 Review and queue tasks at /plans/{plan.id}. To evolve the plan later, run /fabrio:revise-plan {plan_number}.
 ```

@@ -29,14 +29,23 @@ All data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` tools) 
 
 Call `get_plan { plan_number, include_items: true }`. Store as `plan`; capture `plan.id` (the UUID). The plan is a cross-department **objective** (`plan.title`); each item carries its own `department`. It also returns `latest_accepted_revision` (used in Step 2). If null, tell the user the plan number wasn't found. If the plan has no items yet, stop and tell the user to run `$fabrio:generate-plan {plan_number}` first — there's nothing to revise.
 
+### Resolve the plan's TARGET SITES
+
+**A plan targets a set of sites, not one site.** Build that list now and store it as `targets`:
+
+- `plan.all_sites === true` → call `list_sites` and take every site whose `status` is `active`.
+- otherwise → `plan.plan_sites[].site` (each carries `id`, `name`, `relative_path`, `live_url`, `description`, `ai_context`), falling back to the single `plan.site` if that array is empty.
+
+`plan.site` / `plan.site_id` is a legacy pointer at the *first* site and is `null` on an all-sites plan — never treat it as "the plan's site".
+
 ---
 
 ## Step 2 — Determine What Changed Since the Last Revision
 
-Use `plan.latest_accepted_revision.created_at` (from Step 1) as the cutoff. Fetch tasks for this site across **all** departments that moved since then:
-`list_tasks { site_id: plan.site_id, updated_since: "{last_accepted_created_at}", order: "desc" }`
+Use `plan.latest_accepted_revision.created_at` (from Step 1) as the cutoff. Fetch tasks across **all** departments that moved since then, **once per site in `targets`**:
+`list_tasks { site_id: "{target.id}", updated_since: "{last_accepted_created_at}", order: "desc" }`
 
-`done` tasks = initiatives that shipped (retire or build on them). `changes_needed` / repeated churn = friction worth addressing. Because the objective spans departments, watch for cross-department bottlenecks — e.g. content shipped but the design/dev work it depends on hasn't. If there is no prior accepted revision, review the site's task history broadly (`list_tasks { site_id: plan.site_id }`).
+`done` tasks = initiatives that shipped (retire or build on them). `changes_needed` / repeated churn = friction worth addressing. Because the objective spans departments, watch for cross-department bottlenecks — e.g. content shipped but the design/dev work it depends on hasn't. Keep the results grouped by site: an initiative that shipped on one repo has not shipped on the others. If there is no prior accepted revision, review each target site's task history broadly (`list_tasks { site_id: "{target.id}" }`).
 
 ---
 
@@ -46,9 +55,13 @@ Use `plan.latest_accepted_revision.created_at` (from Step 1) as the cutoff. Fetc
 
 Then `list_departments` — the valid `department` slugs plus each one's `description` and `playbook`. Never hardcode the slug set; a department added later should be usable without editing this skill.
 
-`list_learnings { site_id: plan.site_id, include_portfolio: true, statuses: ["active"], limit: 20 }`.
+`list_learnings { site_id: "{target.id}", include_portfolio: true, statuses: ["active"], limit: 20 }` — once per site in `targets`, kept grouped by site.
 
-Also call `list_sites` so you know the account's other codebases. Existing items may already carry a `site_id` override (an initiative on a sibling repo, e.g. the public marketing site) — **carry it forward** in the proposed set, and set `site_id` on any new item that belongs to a different site than the plan's.
+Also call `list_sites` so you know the account's codebases **outside** the plan's target set — an initiative may legitimately belong to a sibling repo the plan doesn't itself target.
+
+**Every item in the proposed set names where it lands.** Carry an existing item's `site_id` forward **verbatim** (changing it silently moves the work to a different repo). Give every new item a `site_id` — the one codebase it lands in — or `all_plan_sites: true` when the same work must be repeated in every targeted repo. On a plan targeting more than one site, `propose_plan_revision` **rejects** an item that states neither, naming it.
+
+An item inherited from an older revision that has no target on a multi-site plan is exactly the bug this rule exists for: assign it a site (or `all_plan_sites: true` if it really is portfolio-wide) and say so in the `change_summary` — it stops the item filing a redundant task in every repo.
 
 ---
 
@@ -60,7 +73,7 @@ Design an updated plan (goals + full item list) across all the departments the o
 - **Add** new initiatives informed by what shipped, the goals, and the learnings — including in departments not yet represented if the objective now needs them.
 - **Reprioritize** based on cross-department bottlenecks, what struggled, or what learnings flag as high-value.
 
-The item list is the COMPLETE proposed set (it replaces the current items if accepted), each with `department`, `title`, `description`, `category`, `frequency`, `priority`, `difficulty`, `execution_mode`, `sort_order`, optional `depends_on` (the `sort_order` of a prerequisite item; auto-queue skips a dependent item until its prerequisite is `done`), optional `site_id` (a sibling site's id when the item belongs to a different codebase than the plan's site — carry existing overrides forward), and optional `kind`. Write a concise `change_summary` (what the human sees first).
+The item list is the COMPLETE proposed set (it replaces the current items if accepted), each with `department`, `title`, `description`, `category`, `frequency`, `priority`, `difficulty`, `execution_mode`, `sort_order`, optional `depends_on` (the `sort_order` of a prerequisite item; auto-queue skips a dependent item until its prerequisite is `done`), `site_id` (the one site the item lands in — carry existing values forward verbatim) **or** `all_plan_sites: true` (repeat the work in every targeted repo), and optional `kind`. Write a concise `change_summary` (what the human sees first).
 
 **`execution_mode` — how each item's deliverable lands** (`repo` = files in a site repo → branch + PR · `artifact` = a markdown document with no repo home · `external` = an action on a third-party system that a **human** performs from the package Fabrio prepares). Independent of `department`: a marketing item can be `repo` and a development item can be `artifact`. **Carry an existing item's mode forward** unless the work genuinely changed shape, and set one on every new item you can classify — omit only when truly unclear, and the executor decides on the first run. If a mode looks wrong given what actually happened (an item classified `external` that has been shipping PRs, say), correcting it is a legitimate revision — call it out in the `change_summary`.
 
@@ -100,7 +113,7 @@ No retrospective — this skill wrote no code; the meaningful outcome is the hum
 ## Step 6 — Output Summary
 
 ```
-📝 Proposed revision #{N} for {plan.site.name}
+📝 Proposed revision #{N} — "{plan.title}" across {S} site(s): {target site names}
 
 {change_summary}
 

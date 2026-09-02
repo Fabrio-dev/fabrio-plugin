@@ -42,6 +42,8 @@ If `git_provider` is set, run its `ops.auth_check`. On failure, stop and print `
 
 Store the resolved provider as `PROVIDER` — every `PROVIDER.ops.*` reference in the rest of this skill means "run that command, substituting placeholders." `{repo}`/`{org}`/`{project}` come from `PROVIDER.coordinates` applied to the current repo's git remote; for GitHub these are inferred automatically by `gh` from the working directory. `get_task` (Step 3b) returns the same resolved provider as `task.account.git_provider`.
 
+**A `PROVIDER.ops.*` failure anywhere later in the run is an infrastructure blocker, not something to route around.** The auth_check above only rules out the common case; a command can still fail mid-chain (e.g. `az repos`/`az devops` demanding an interactive login when reading PR comments) or an MCP tool call can be denied because it isn't in the dispatched task's `--allowedTools` scope. Either is a stop condition: `log_task_history { task_id: T.id, action: "error", notes: "{what failed} — {the exact remediation command or config change}" }`, leave git clean (per the mid-chain failure handling below), and report. **Never** improvise around it by calling an MCP tool outside the granted scope as a fallback — a denial is the boundary, not a suggestion to find another door. **If HEADLESS**, never raise it conversationally: there is no one to answer, so an unanswered question in chat is functionally identical to silence, except the process then exits 0 and looks "finished" to the dispatcher instead of recording what actually happened. **If not HEADLESS**, asking in chat is fine — same as Step 3e's clarification contract.
+
 - If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabrio` MCP server isn't connected:
   > Create a key in **Fabrio → Settings → API keys**, then run the **Connect command** shown there:
   > ```
@@ -123,14 +125,34 @@ If there's newer feedback, read it (it applies to whichever task(s) it names), r
 
 ---
 
-## Step 2.5 — Choose Execution Mode (MANDATORY)
+## Step 2.5 — Choose Execution Mode (MANDATORY — decide before touching any task)
 
-Do this before implementing any task. Ensure every task has a persisted `difficulty` (`light`, `standard`, or `heavy`) and load `get_model_tiers` for the account's routing intent.
+**Do this before you fetch, plan, claim, implement, or commit a single task.** Deciding the mode is a hard gate: you may not enter Step 3 or Step 3R until you have completed and printed this decision. Implementing even one task first (as "inline") and then deciding is a **defect** — it silently strands the whole chain on the wrong model.
 
-- **Routed mode (preferred):** when Codex agent delegation is available, delegate every task sequentially in Step 3R. Use the task's difficulty to select the closest available Codex model/reasoning tier; if an account mapping names a provider-specific model unavailable in Codex, preserve its quality intent (light/standard/heavy) and report the Codex model actually used.
-- **Inline fallback:** only when agent delegation is unavailable. Run Step 3 in the current task and print that model-tier isolation is unavailable.
+A running session can't change models mid-conversation, so each task only lands on its mapped model if it runs in its **own process**. The current session's model is **irrelevant** to which model a task should use — do not assume "this session is already the right model."
 
-Print the decision and per-task routing before touching code. In routed mode, the orchestrator never implements task code itself; it only delegates, waits, verifies the commit and Fabrio state, and falls back inline for an individual task whose delegate failed without blocking or committing.
+1. **Ensure every task has a `difficulty`** (you need the tier to pick a model). Classify any null ones now (`light` / `standard` / `heavy` — rubric in 3f) and persist with `update_task`.
+2. **Load the tier → model map:** `get_model_tiers`.
+3. **Probe delegated dispatch — actually test it, don't assume.** A dispatched child must (a) be able to run at all, which means the `claude` CLI is authenticated, and (b) reach the `fabrio` MCP. Run a trivial child and check it returns cleanly:
+   ```bash
+Delegate `reply with exactly: ok` to a Codex sub-agent and wait for completion.
+   ```
+   Headless dispatch is available **only if that prints `ok`** (exit 0). If it prints anything else, dispatch is **not** available — read the reason and fall back to inline (Step 3), telling the user the exact fix:
+   - `Failed to authenticate` / `OAuth session expired` / `loggedIn: false` / any auth error → the `claude` CLI isn't signed in, so no child can run. **Tell the user:** run `claude auth login` (interactive), or for hands-off/scheduled runs `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) in `~/.claude/settings.json` — see **Fabrio → Settings → API keys** for the full setup.
+   - a permission/prompt error or a hang on an `mcp__fabrio` call → the `-p` child isn't allowed to use the MCP unattended. **Tell the user:** add `mcp__fabrio` (plus `Bash(git:*)`, `Bash(gh:*)` (or `Bash(az:*)` on an Azure DevOps workspace), `Bash(npm run:*)`, `Bash(npx:*)`) to `permissions.allow` in `~/.claude/settings.json` (user scope, so it applies in every repo).
+   - `command not found` → `claude` not on `PATH`.
+
+   **Never silently pretend to route.** If the probe fails, you run inline **and** print the reason + fix, so the user can enable routing.
+
+Then pick the mode:
+
+- **Routed mode — the default whenever the probe passed.** Go to **Step 3R**; **every** task is dispatched to a delegated Codex agent on its own tier's model. Use routed mode **even if all tasks share one tier**, because the session's model is not guaranteed to equal that tier's model (a chain of `heavy` tasks in a Haiku session must still route to the heavy model). This is the only mode that guarantees each task runs on its mapped model.
+- **Inline fallback — only when the probe failed.** Go to **Step 3**; the whole chain runs in this session on its current model. Print a warning that names the probe failure and its fix: `⚠️  Headless dispatch unavailable ({probe reason}) — running the whole chain inline on {current model}; tasks are NOT routed to their mapped models. Fix: {the fix from above}.`
+
+Print the decision. For routed mode, print the per-task plan, e.g. `Routing: #64→opus (heavy) · #66→sonnet (standard) · #67→opus (heavy) …`.
+
+> **Hard rule for routed mode:** you (the orchestrator) do **not** implement or commit task code yourself — your only per-task action is the `delegate the referenced $fabrio:* skill to a Codex sub-agent` dispatch in Step 3R. If you're about to edit a file or run `git commit` for a task in routed mode, **STOP**: dispatch instead. Falling back to inline because dispatch "seems easier" is a defect, not a shortcut. The only route from routed mode into inline work is the explicit per-task dispatch **fallback** in Step 3R (child errored without claiming/committing).
+
 ---
 
 ## Step 3 — Implement Each Task in the Chain — Inline fallback (in order)
@@ -189,21 +211,37 @@ When every task in the chain has been implemented and the final build is green, 
 
 ---
 
-## Step 3R — Routed mode (per-task Codex agent delegation)
+## Step 3R — Routed mode (per-task model dispatch)
 
-You are already on the shared chain branch. Delegate tasks **sequentially** because they share one checkout and each task builds on the prior task's commit.
+Used when Step 2.5 chose **routed mode**. You are already on the shared chain branch (Step 2). Implement the chain by dispatching one delegated Codex agent per task, each on its own tier's model, **sequentially** (the next task builds on the previous one's commits, which are on disk once the child exits).
+
+> **You do not write code here.** In routed mode the orchestrator's job is only: grep for the resume marker, resolve the model, dispatch, read the outcome, repeat. You never open files, edit, or `git commit` a task yourself. If you catch yourself implementing a task in-session, you've dropped out of routed mode — stop and dispatch it. The single exception is the explicit error **fallback** in 4·bullet 3 below.
 
 For each task **T** in order:
 
-1. Check `git log {branch} --grep "^Task #{T.task_number}:" -1`; skip an existing marker.
-2. Resolve the closest available Codex model/reasoning tier from T's difficulty and the account's tier intent.
-3. Delegate `$fabrio:feature-chain --step {T.task_number}` to one Codex agent in the repo working directory. Give it the selected tier, current branch, task number, and the instruction not to open a PR. Wait for completion before continuing.
-4. Verify the result:
-   - New task commit plus Fabrio status `in_progress` → continue.
-   - Open question, `is_blocked`, or posted decision → hold the chain at Step 4.
-   - No commit and no durable block → run Step 3's 3b–3k inline for T and log `dispatch_fallback`.
+1. **Already done?** `git log {branch} --grep "^Task #{T.task_number}:" -1` — if a commit exists, T is on the branch already → skip to the next task.
+2. **Resolve T's model** from the `get_model_tiers` map using `T.difficulty` (default `standard`), and **T's tool scope** from `T.agent.allowed_tools` (034). Both are per task — tasks in one chain routinely resolve to different agents, so read them from T, never from the first task or from the chain.
+3. **Dispatch one child** to implement only T on the current branch — run it from the repo dir so it inherits the `fabrio` connection:
+   ```bash
+Delegate `$fabrio:feature-chain --step {T.task_number} --delegated` to a Codex sub-agent and wait for completion.
+   ```
+   `--allowedTools` is fixed at spawn, so a child started without it silently runs on the machine's full allow-list — and this child is the one writing the code. Omit the flag only when `T.agent.allowed_tools` is empty (a workspace with no profiles yet), since an empty list would spawn a child that can do nothing.
 
-When every task has its commit and the final build is green, go to Step 5. The parent always opens the single PR.
+   **Run it in the FOREGROUND and block until it exits — never background it.** In delegated
+   `-p` mode this orchestrator ends as soon as it stops emitting output, taking the `--step`
+   child with it: no commit lands, the chain looks stalled, and the run exits 0 as though it
+   had succeeded. There is no completion notification to wait for.
+
+   This dispatch is **unconditionally delegated** — nobody is watching that child regardless of whether the parent chain itself was invoked with `--delegated`, so it always carries the flag. Wait for it to exit before the next task — never dispatch chain tasks in parallel (they share one checkout).
+4. **After the child exits, read the outcome:**
+   - A new `Task #{T.task_number}:` commit exists on `{branch}` **and** `get_task` shows T `in_progress` → success; continue to the next task.
+   - **No** commit AND T has an open question / `is_blocked` / a posted decision → the child **held** on T. Go to **Step 4** (hold the chain; cascade to downstream tasks; no PR).
+   - No commit and no block (the child errored) → **hold the chain and stop** — log `log_task_history { task_id: T.id, action: "dispatch_failed", notes: "Headless --step dispatch failed — chain held, no PR opened." }`, cascade `blocked_by_dependency` to the downstream tasks per Step 4, and open no PR. **Do not implement T inline.** The orchestrator runs on the cheapest model with the orchestrator's tool scope; implementing a task there silently discards its difficulty tier and its agent profile's `allowed_tools` (034), which a session cannot change mid-conversation. A held chain is re-runnable and costs one cycle; a chain half-built on the wrong model and the wrong tools is a PR nobody can trust.
+
+When every task has its commit and the final build is green, go to **Step 5**. (Step 5's PR is always opened by the parent; per-task retrospectives are run by whoever implemented the task — Step 6.)
+
+> **Unattended runs:** the `--step` children run delegated (`-p`), so they need two things set up once (both covered in **Fabrio → Settings → API keys**): (1) an authenticated CLI that stays signed in — `claude auth login`, or a persistent `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` for scheduled runs; and (2) a **user-scope** allow-list in `~/.claude/settings.json` (`mcp__fabrio` plus `Bash(git:*)`, `Bash(gh:*)` (or `Bash(az:*)` on an Azure DevOps workspace), `Bash(npm run:*)`, `Bash(npx:*)`), since a child runs in each site's repo dir where project settings don't apply. The Step 2.5 probe catches both if they're missing. The inline fallback (Step 3R bullet 4's third case) runs in this same session, so it's HEADLESS only if this run itself was — an attended fallback may still chat-prompt as normal.
+
 ---
 
 ## `--step {n}` — single-task child (internal; used by Step 3R)

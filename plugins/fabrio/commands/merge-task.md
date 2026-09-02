@@ -39,7 +39,7 @@ Extract the task number. If none: `Error: Task number required. Usage: /fabrio:m
 
 ## Step 2 — Fetch Task
 
-Call `get_task { task_number, include_history: true }`. If null: `Error: Task #{task_number} not found.` Store as `task`. Note `task.execution_mode`, `task.pr_number`, `task.account.git_provider` (the workspace's resolved git provider — read at Step 5, only for tasks with a PR) and (for non-repo tasks) `task.deliverable`.
+Call `get_task { task_number, include_history: true, include_deliverable: true, include_question_messages: true }` (the last two are off by default — `include_deliverable` returns a non-repo task's body, `include_question_messages` returns answered-thread messages for the Step 6 retrospective). If null: `Error: Task #{task_number} not found.` Store as `task`. Note `task.execution_mode`, `task.pr_number`, `task.account.git_provider` (the workspace's resolved git provider — read at Step 5, only for tasks with a PR) and (for non-repo tasks) `task.deliverable`.
 
 **Resolve `source_root` only if `task.pr_number` is set** — a task with no PR has no local repo to touch, so skip this entirely rather than prompting for a path the run will never use. Full site path = `{source_root}/{task.site.relative_path}`. Resolve in this order (stop at the first that yields a value):
 1. The `FABRIO_SOURCE_ROOT` env var, if set (back-compat — power users may keep this).

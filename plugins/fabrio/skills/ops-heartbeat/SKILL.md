@@ -15,16 +15,11 @@ description: "Runs one cycle of the autonomous ops loop — queues due recurring
 
 One cycle of the self-improving loop, across **every department** — development, design, marketing and content all execute here. The gates stay intact: **PRs always wait for your review, nothing merges** (this skill never calls `$fabrio:merge-task`), and **no outward action is ever performed** — work that needs publishing, sending or spending is prepared for you and stops there.
 
-> **The execution loop now belongs to `fabrio-runner` (034).** That is a plain Node process —
-> no language model — which polls `GET /api/runner/ready` and spawns one child per ready task,
-> in parallel across safe lanes, scoped by each task's agent profile. Steps 0, 1.5, 2 and 2C
-> below are the **manual / no-runner** path: they still work exactly as described when you type
-> this command, and the runner does not exist to replace *you* running a cycle on demand.
->
-> **What is still only here:** Step 1 (running due recurring jobs) and Step 3 (weekly plan
-> revisions + learnings consolidation). Those need judgement, so they stay in a model. If you
-> run `fabrio-runner` continuously, still schedule this skill **daily** — otherwise recurring
-> jobs never fire and the weekly steps never run.
+> **`fabrio-runner` (the npm package) now owns the task-execution loop** — Steps 0, 1.5, 2 and
+> 2C below are the equivalent **manual path**, still exact when you run this by hand. Step 1
+> (due recurring jobs) and Step 3 (weekly plan revisions + learnings consolidation) need
+> judgement and stay here only. **If the runner runs continuously, still schedule this skill
+> daily** — otherwise jobs never fire and the weekly steps never run.
 
 **Invocation:** `$fabrio:ops-heartbeat` (daily) or `$fabrio:ops-heartbeat --weekly` (also run the weekly steps now). Add `--chain` to have Step 2 handle ready **repo** tasks by **auto-grouping** them into dependency chains via `$fabrio:feature-chain` (dependent tasks build on one shared branch and land as a single PR) instead of the default one-PR-per-task dispatch; non-repo tasks still run individually. Flags combine (`--weekly --chain`). Trigger-agnostic: by hand, via `/loop`, or from cron/launchd/a cloud routine — `--chain` is meant for the unattended scheduled runs where grouping dependent work into one PR is worth more than per-task model routing.
 
@@ -72,13 +67,13 @@ Skip the rest where `eligible === false` — the `skip_reason` explains why: pla
 
 ---
 
-## Step 1.5 — Workspace Git Provider Check (031)
+## Step 1.5 — Workspace Git Provider Check
 
 Call `get_account_context` **once** and store `git_provider`. This is not a hard stop for the whole run — non-repo work (`artifact`/`external`, and jobs in Step 1) doesn't need a git host — but it gates every `execution_mode: "repo"` task in Steps 2 and 2C.
 
 If `git_provider` is null, set `provider_configured = false` and note it for Step 5's summary: `"No git provider is selected for this workspace — repo tasks were skipped. Set one in Fabrio → Settings → AI instructions."` Otherwise `provider_configured = true`.
 
-**Why check here instead of letting each dispatched child fail:** `$fabrio:feature-request` and `$fabrio:feature-chain` both fail fast on a null provider (031) — but if this step didn't pre-filter, the heartbeat would dispatch one delegated Codex agent per repo task, and every single one would print the identical remediation and do nothing. Checking once here means the run reports it once, and CPU/tokens aren't burned proving the same negative N times.
+**Why check here instead of letting each dispatched child fail:** `$fabrio:feature-request` and `$fabrio:feature-chain` both fail fast on a null provider — but if this step didn't pre-filter, the heartbeat would dispatch one delegated Codex agent per repo task, and every single one would print the identical remediation and do nothing. Checking once here means the run reports it once, and CPU/tokens aren't burned proving the same negative N times.
 
 ---
 
@@ -88,7 +83,7 @@ Finish **as many ready tasks as possible, strictly one at a time** — never in 
 
 **Every department's work is in scope**, not just code. `$fabrio:execute-task` classifies each task's `execution_mode` and routes it: `repo` work goes on to `$fabrio:feature-request` (branch → PR), `artifact` work produces a reviewable markdown deliverable, and `external` work produces a ready-to-execute package for a human. The heartbeat's ceiling is unchanged and applies to all three: **it opens PRs and prepares packages, but never merges and never performs an outward action.**
 
-**If `!provider_configured`:** skip any **T** whose `execution_mode == "repo"` — do not dispatch it. `log_task_history { task_id: T.id, action: "skill_skipped", notes: "Skipped: no git provider configured for this workspace (031)." }`, add T to a `provider_unconfigured_skipped` count (not `blocked_this_run` — this isn't a dependency cascade), and continue to the next task. An unclassified task still runs normally through `$fabrio:execute-task` — if it classifies as `repo`, that one child hits `feature-request`'s own gate and reports the same remediation for just that task, which is an acceptable single instance, not N.
+**If `!provider_configured`:** skip any **T** whose `execution_mode == "repo"` — do not dispatch it. `log_task_history { task_id: T.id, action: "skill_skipped", notes: "Skipped: no git provider configured for this workspace." }`, add T to a `provider_unconfigured_skipped` count (not `blocked_this_run` — this isn't a dependency cascade), and continue to the next task. An unclassified task still runs normally through `$fabrio:execute-task` — if it classifies as `repo`, that one child hits `feature-request`'s own gate and reports the same remediation for just that task, which is an acceptable single instance, not N.
 
 > **Mode.** Default (no `--chain`): execute each task individually via `$fabrio:execute-task` — steps **2a–2d** below. With **`--chain`**: additionally auto-group dependent **repo** tasks into shared-branch chains via `$fabrio:feature-chain` — see **Step 2C**, which runs *before* 2a–2d and takes the repo tasks out of the per-task pass.
 
@@ -98,7 +93,7 @@ Call `list_tasks { statuses: ["ready", "changes_needed"], is_blocked: false, ord
 `log_task_history { task_id: T.id, action: "blocked_by_dependency", notes: "Skipped: depends on task #{prereq} which is blocked — both blocked until #{prereq} is resolved." }`
 (A prerequisite merely *not done yet* but not blocked does **not** skip T — only a blocked one cascades.) You can see a task's plan item + dependency via `get_task`/`list_tasks`; use `list_due_plan_items` output or `get_plan` when you need the dependency chain.
 
-**b. Resolve the model and the tool scope** — the model for T's tier (default `standard` when `difficulty` is null) from the `get_model_tiers` result, and T's agent tool scope from `get_task { task_number }` → `task.agent.allowed_tools` (034). `fabrio-runner` resolves both server-side (`getDispatchQueue`); this manual path has to do it itself, and must produce the same command, or a heartbeat run silently grants wider tools than a runner run.
+**b. Resolve the model and the tool scope** — the model for T's tier (default `standard` when `difficulty` is null) from the `get_model_tiers` result, and T's agent tool scope from `get_task { task_number }` → `task.agent.allowed_tools`. `fabrio-runner` resolves both server-side; this manual path has to do it itself, and must produce the same command, or a heartbeat run silently grants wider tools than a runner run.
 
 **c. Dispatch** — run T as its own delegated Codex agent on the resolved model. Launch it from the **same directory you're running this heartbeat from** — that guarantees the child inherits the `fabrio` connection whether it was added at user scope (available everywhere) or local scope (tied to this directory). The `$fabrio:execute-task` command itself is always available once the plugin is installed. Headless `-p` mode can't prompt, so tools must be allow-listed (see Permissions note):
 ```bash
@@ -114,7 +109,7 @@ The child owns all DB writes (the claim, the mode classification, the PR or deli
 **On failure, record and move on — never run the task inline.** If the tier lookup is empty, `Codex agent delegation availability` fails, or the child exits non-zero **without** having claimed T (status still `ready`/`changes_needed`), log it and continue:
 `log_task_history { task_id: T.id, action: "dispatch_failed", notes: "Headless dispatch unavailable or failed — left for the next cycle. {reason}" }`
 
-> **Do not fall back to implementing T in this session.** Running a task inside the orchestrator discards the three things the dispatch exists to provide: process isolation, the per-task model, and the agent profile's tool scope (034) — a session cannot change model or `--allowedTools` mid-conversation. An inline run is not a degraded success, it is a different and less safe execution path. Re-running later is free: Step 3.5 of `$fabrio:execute-task` resumes from existing work.
+> **Do not fall back to implementing T in this session.** Running a task inside the orchestrator discards the three things the dispatch exists to provide: process isolation, the per-task model, and the agent profile's tool scope — a session cannot change model or `--allowedTools` mid-conversation. An inline run is not a degraded success, it is a different and less safe execution path. Re-running later is free: Step 3.5 of `$fabrio:execute-task` resumes from existing work.
 >
 > If `Codex agent delegation availability` fails, that is an environment fault affecting **every** task — say so once and stop Step 2 rather than reporting it N times.
 

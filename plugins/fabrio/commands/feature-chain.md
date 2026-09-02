@@ -16,7 +16,7 @@ Implement **dependent** `execution_mode='repo'` tasks together: run them one-at-
 
 **Resume:** re-running detects work already committed on the shared branch (per-task `Task #{n}:` commit markers) and picks up from the first task that isn't done yet.
 
-**Model routing (automatic):** a session can't switch models mid-run, so whenever headless dispatch is available, **every** task is implemented in its own headless child on its tier's mapped model (a `light` task on the cheap model, a `heavy` one on the capable model), all on the same shared branch — regardless of what model this session is running. Only when headless dispatch isn't available does the chain fall back to running inline on the current session's model (with a warning that tasks aren't routed). See Step 2.5.
+**Model routing (automatic):** whenever headless dispatch is available, every task is implemented in its own child on its tier's mapped model (all on the shared branch), so the chain isn't stuck on this session's model. It falls back to inline on the current model only when dispatch is unavailable, with a warning. See Step 2.5.
 
 ---
 
@@ -26,7 +26,7 @@ All Fabrio data access goes through the **`fabrio` MCP server** (tools named `mc
 
 Run first; if any check fails, stop:
 
-**Workspace git provider — do this before anything else, no default, ever (031).** Call `get_account_context`. **If `git_provider` is null, stop the entire run** (a chain can't start without a git host to open its PR against). Do not group tasks, create a branch, or edit a file first. Print exactly:
+**Workspace git provider — do this before anything else, no default, ever.** Call `get_account_context`. **If `git_provider` is null, stop the entire run** (a chain can't start without a git host to open its PR against). Do not group tasks, create a branch, or edit a file first. Print exactly:
 > `Error: No git provider is selected for this workspace. Set it in Fabrio → Settings → AI instructions, then re-run /fabrio:feature-chain.`
 
 If `git_provider` is set, run its `ops.auth_check`. On failure, stop and print `git_provider.auth_hint` verbatim. **Never fall back to another provider, and never guess one from the git remote.**
@@ -128,9 +128,7 @@ If there's newer feedback, read it (it applies to whichever task(s) it names), r
 
 ## Step 2.5 — Choose Execution Mode (MANDATORY — decide before touching any task)
 
-**Do this before you fetch, plan, claim, implement, or commit a single task.** Deciding the mode is a hard gate: you may not enter Step 3 or Step 3R until you have completed and printed this decision. Implementing even one task first (as "inline") and then deciding is a **defect** — it silently strands the whole chain on the wrong model.
-
-A running session can't change models mid-conversation, so each task only lands on its mapped model if it runs in its **own process**. The current session's model is **irrelevant** to which model a task should use — do not assume "this session is already the right model."
+**Do this before you fetch, plan, claim, implement, or commit a single task.** Deciding the mode is a hard gate — you may not enter Step 3 or Step 3R until it is done and printed. A session can't switch models mid-run, so a task only lands on its mapped model in its **own process**; this session's model is irrelevant. Implementing even one task first (as "inline") and then deciding is a **defect** that strands the whole chain on the wrong model.
 
 1. **Ensure every task has a `difficulty`** (you need the tier to pick a model). Classify any null ones now (`light` / `standard` / `heavy` — rubric in 3f) and persist with `update_task`.
 2. **Load the tier → model map:** `get_model_tiers`.
@@ -147,7 +145,7 @@ A running session can't change models mid-conversation, so each task only lands 
 
 Then pick the mode:
 
-- **Routed mode — the default whenever the probe passed.** Go to **Step 3R**; **every** task is dispatched to a headless child on its own tier's model. Use routed mode **even if all tasks share one tier**, because the session's model is not guaranteed to equal that tier's model (a chain of `heavy` tasks in a Haiku session must still route to the heavy model). This is the only mode that guarantees each task runs on its mapped model.
+- **Routed mode — the default whenever the probe passed.** Go to **Step 3R**; **every** task is dispatched to a headless child on its own tier's model, even if all tasks share one tier (a chain of `heavy` tasks in a Haiku session must still route to the heavy model).
 - **Inline fallback — only when the probe failed.** Go to **Step 3**; the whole chain runs in this session on its current model. Print a warning that names the probe failure and its fix: `⚠️  Headless dispatch unavailable ({probe reason}) — running the whole chain inline on {current model}; tasks are NOT routed to their mapped models. Fix: {the fix from above}.`
 
 Print the decision. For routed mode, print the per-task plan, e.g. `Routing: #64→opus (heavy) · #66→sonnet (standard) · #67→opus (heavy) …`.
@@ -194,9 +192,7 @@ Read the codebase, then save a per-task plan so an interrupted run has context: 
 - `{ claimed: false, current_status }` → `in_progress` is your own resume (proceed); `under_review`/`approved`/`done` means it was handled elsewhere — that breaks the chain's assumptions, so **hold** and tell the user T is already past implementation.
 
 ### 3i — Implement (on the shared branch)
-Follow the plan; read adjacent files and match existing patterns exactly. DB changes → **new numbered migration** in `supabase/migrations/` + update `supabase/schema.sql`. Type-check with `npx tsc --noEmit` as you go. **Sub-skills — invoke when applicable:** `/frontend-design`, `/react-best-practices`, `/web-design-guidelines`, `/composition-patterns`, `/ux-review`.
-
-**Fabrio conventions:** dark mode only (`zinc-950` → `zinc-900` → `zinc-800`); success `emerald-400`, destructive `rose-400`; API routes follow `app/api/sites/` & `app/api/tasks/`; hooks follow the SWR pattern in `hooks/useSites.ts`.
+Follow the plan; read adjacent files and match existing patterns exactly — including the repo's own `CLAUDE.md`/`AGENTS.md` and its DB-migration workflow. Type-check with the repo's own command as you go. **Sub-skills — invoke when applicable:** `/frontend-design`, `/react-best-practices`, `/web-design-guidelines`, `/composition-patterns`, `/ux-review`.
 
 ### 3j — Commit with the resume marker
 Commit T's work in logical units; the **first line of at least one commit for T must start** `Task #{T.task_number}:` — this is the resume marker Step 3a greps for:
@@ -221,7 +217,7 @@ Used when Step 2.5 chose **routed mode**. You are already on the shared chain br
 For each task **T** in order:
 
 1. **Already done?** `git log {branch} --grep "^Task #{T.task_number}:" -1` — if a commit exists, T is on the branch already → skip to the next task.
-2. **Resolve T's model** from the `get_model_tiers` map using `T.difficulty` (default `standard`), and **T's tool scope** from `T.agent.allowed_tools` (034). Both are per task — tasks in one chain routinely resolve to different agents, so read them from T, never from the first task or from the chain.
+2. **Resolve T's model** from the `get_model_tiers` map using `T.difficulty` (default `standard`), and **T's tool scope** from `T.agent.allowed_tools`. Both are per task — tasks in one chain routinely resolve to different agents, so read them from T, never from the first task or from the chain.
 3. **Dispatch one child** to implement only T on the current branch — run it from the repo dir so it inherits the `fabrio` connection:
    ```bash
    claude -p "/fabrio:feature-chain --step {T.task_number} --headless" --model "$T_MODEL" --permission-mode acceptEdits --allowedTools "{comma-joined T.agent.allowed_tools}"
@@ -237,7 +233,7 @@ For each task **T** in order:
 4. **After the child exits, read the outcome:**
    - A new `Task #{T.task_number}:` commit exists on `{branch}` **and** `get_task` shows T `in_progress` → success; continue to the next task.
    - **No** commit AND T has an open question / `is_blocked` / a posted decision → the child **held** on T. Go to **Step 4** (hold the chain; cascade to downstream tasks; no PR).
-   - No commit and no block (the child errored) → **hold the chain and stop** — log `log_task_history { task_id: T.id, action: "dispatch_failed", notes: "Headless --step dispatch failed — chain held, no PR opened." }`, cascade `blocked_by_dependency` to the downstream tasks per Step 4, and open no PR. **Do not implement T inline.** The orchestrator runs on the cheapest model with the orchestrator's tool scope; implementing a task there silently discards its difficulty tier and its agent profile's `allowed_tools` (034), which a session cannot change mid-conversation. A held chain is re-runnable and costs one cycle; a chain half-built on the wrong model and the wrong tools is a PR nobody can trust.
+   - No commit and no block (the child errored) → **hold the chain and stop** — log `log_task_history { task_id: T.id, action: "dispatch_failed", notes: "Headless --step dispatch failed — chain held, no PR opened." }`, cascade `blocked_by_dependency` to the downstream tasks per Step 4, and open no PR. **Do not implement T inline.** The orchestrator runs on the cheapest model with the orchestrator's tool scope; implementing a task there silently discards its difficulty tier and its agent profile's `allowed_tools`, which a session cannot change mid-conversation. A held chain is re-runnable and costs one cycle; a chain half-built on the wrong model and the wrong tools is a PR nobody can trust.
 
 When every task has its commit and the final build is green, go to **Step 5**. (Step 5's PR is always opened by the parent; per-task retrospectives are run by whoever implemented the task — Step 6.)
 

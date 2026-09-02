@@ -28,7 +28,7 @@ All Fabrio data access is through the **`fabrio` MCP server** (`mcp__fabrio__*` 
 
 ## Prerequisites
 
-**Workspace git provider** (031) — **only required for a task that has a PR.** Checked at Step 5, not up front: an `artifact`/`external` task never touches a git host and must not be blocked on config it doesn't use. When it is needed: if the workspace has no `git_provider` selected, or its CLI isn't authenticated, Step 5 stops with the exact remediation.
+**Workspace git provider** — **only required for a task that has a PR.** Checked at Step 5, not up front: an `artifact`/`external` task never touches a git host and must not be blocked on config it doesn't use. When it is needed: if the workspace has no `git_provider` selected, or its CLI isn't authenticated, Step 5 stops with the exact remediation.
 
 If the `mcp__fabrio__*` tools aren't available, stop and tell the user the `fabrio` MCP server isn't connected:
 
@@ -89,7 +89,7 @@ Output: `Error: Task #{task_number} has an incomplete PR link (pr_url={...}, pr_
 
 *(repo tasks only)*
 
-**Workspace git provider (031) — no default, ever.** `task.account.git_provider` (from Step 2). **If it is null, stop** — the workspace's provider setting was cleared since the PR was opened:
+**Workspace git provider — no default, ever.** `task.account.git_provider` (from Step 2). **If it is null, stop** — the workspace's provider setting was cleared since the PR was opened:
 > `Error: No git provider is selected for this workspace. Set it in Fabrio → Settings → AI instructions, then re-run $fabrio:merge-task {task_number}.`
 
 Otherwise run its `ops.auth_check`; on failure stop and print `git_provider.auth_hint` verbatim. Store the resolved provider as `PROVIDER` for the rest of this skill.

@@ -45,7 +45,7 @@ All Fabrio data access goes through the **`fabrio` MCP server** (tools named `mc
   > ```
   > Restart Codex, open a new task, and re-invoke.
 
-**The workspace git provider (031) is NOT a precondition here.** Its fail-fast gate (no default, ever) lives inside `$fabrio:feature-request`, which only runs for `repo` tasks — an artifact or external task must not be blocked on git config it never uses.
+**The workspace git provider is NOT a precondition here.** Its fail-fast gate (no default, ever) lives inside `$fabrio:feature-request`, which only runs for `repo` tasks — an artifact or external task must not be blocked on git config it never uses.
 
 **Source root** (only needed for `repo` tasks, resolved lazily by the delegate) — see `$fabrio:feature-request` Step 0.
 
@@ -115,7 +115,7 @@ Batch: `⏭  Task #{n} has {N} unanswered question(s) — skipping.` Single: lis
 
 ## Step 4.5 — Read the Agent
 
-**Read the agent you are running as.** `get_task` embedded it as `task.agent` (034) — the craft
+**Read the agent you are running as.** `get_task` embedded it as `task.agent` — the craft
 layer: `instructions` (binding, see Step 5), `skills` (reference skills to invoke while working,
 Step 8), and `allowed_tools` (what this run was spawned with).
 
@@ -124,7 +124,7 @@ were given is a provisional guess from match rules — Step 5.5 classifies and s
 one. If it is false or absent, the agent is settled; use it as-is.
 
 **Record which revision of the rules you worked under.** `task.agent.version` increments every
-time someone edits that agent (035). Log it once, before producing anything:
+time someone edits that agent. Log it once, before producing anything:
 `log_task_history { task_id, action: "agent_applied", notes: "{agent.name} v{agent.version}" }`
 — so a reviewer looking at this work later can tell whether it predates a correction to the
 agent's instructions, and the Change history in **Settings → Agents** shows what changed.
@@ -139,7 +139,7 @@ Step 2 `get_task` call — no separate calls.
 **Context layers — all binding, narrowest wins.** Read them widest-first so the narrower one lands last:
 1. `task.account.ai_context` — the workspace's rules (branch naming, company-wide code/security policy). Applies to every site and department.
 2. the department `playbook` (from the Step 2 `get_task` call).
-3. `task.agent.instructions` — the craft rules of the agent running this task (034): how this kind of work is done well.
+3. `task.agent.instructions` — the craft rules of the agent running this task: how this kind of work is done well.
 4. `task.site.ai_context` — this repo.
 5. the task itself: `title`, `description`, `feature_summary`, `acceptance_criteria`, question threads, `decided` decisions.
 
@@ -202,7 +202,7 @@ Persist immediately: `update_task { task_id, fields: { execution_mode: "{mode}" 
 
 Persist with `update_task { task_id, fields: { difficulty: "{tier}" } }`.
 
-### `agent_profile_id` — if `task.agent.resolved_by_match` is true (034)
+### `agent_profile_id` — if `task.agent.resolved_by_match` is true
 
 Call **`list_agent_profiles`** and pick the one whose **`when_to_use`** best describes this
 task. Read the prose — **never assume a fixed slug set**: profiles are per-account and users

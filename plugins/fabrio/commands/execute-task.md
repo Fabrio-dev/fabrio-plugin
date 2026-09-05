@@ -61,7 +61,7 @@ Accept an optional **`--headless`** flag anywhere in the arguments (e.g. `/fabri
 Call **`get_task { task_number, include_history: true, include_learnings: true, include_decisions: true, include_playbook: true }`** — one call that carries everything Step 4.5 needs. Returns the task plus:
 - `account` (id, name, ai_context, git_provider — workspace-wide), `site` (id, name, relative_path, live_url, ai_context)
 - `questions` (full messages on OPEN threads only), `attachments`
-- `history` — last 25 entries. For a `changes_needed` task with no PR the reviewer's feedback lives here (`action: "review_feedback"`); without it you'd re-produce the rejected deliverable.
+- `history` — last 25 entries. For a `changes_needed` task the reviewer's feedback may live here (`action: "review_feedback"`, plus `action: "comment"` for context) whether or not the task has a PR; without it you'd re-produce the rejected work.
 - `learnings` → `loaded_learnings` (active, this site + portfolio, capped at 12). Treat as instructions: apply `code_pattern`/`preference`; check output against `pitfall`/`review_feedback` (the reviewer WILL re-flag them); follow `process`.
 - `decisions` → `loaded_decisions` (this site, `decided`). Binding — apply `chosen_option_key`/`chosen_rationale` instead of re-asking. `__custom` = the human wrote their own answer.
 - `playbook` → this department's craft conventions (may be null). Binding, like `ai_context` — Step 5 says how the layers stack.
@@ -138,7 +138,7 @@ None is advisory. They are **additive** — precedence settles only a *direct* c
 
 If `task.attachments` is non-empty, view each image `public_url` before working — treat it as a spec.
 
-For `changes_needed` on a task with a **PR**, the delegate reads the review comments. For `changes_needed` on an `artifact`/`external` task, the feedback is in the **history** from Step 2 — entries with `action: "review_feedback"` and `changed_by: "human"`, newest last. Read every one since the last `deliverable_saved` entry and treat them as the required changes; also check question threads for anything the reviewer raised there. Feedback deliberately lands in history rather than a question thread so it doesn't block the task — the re-run is the point.
+For `changes_needed`, read the **history** from Step 2 — entries with `action: "review_feedback"` (binding: the required changes) and `action: "comment"` (context), newest last. **Do not filter on `changed_by`** — it carries the reviewer's identity (an email, or a Discord name), not the literal `"human"`. Read every one since the last `deliverable_saved` entry, and also check question threads for anything the reviewer raised there. On a task with a **PR**, the delegate additionally reads the PR review comments — ticket feedback and PR comments are both real, so neither substitutes for the other. Feedback deliberately lands in history rather than a question thread so it doesn't block the task — the re-run is the point.
 
 Ask: **can I complete this correctly without making assumptions a human should make?** Watch for missing scope, undefined audience or channel, unstated brand/voice constraints, budget or spend implications, and anything that commits the business publicly.
 

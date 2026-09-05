@@ -77,7 +77,7 @@ Call **`get_task { task_number, include_learnings: true, include_decisions: true
 - `questions` (full messages on OPEN threads only), `attachments`, `agent` (034 — `instructions` binding, `skills` applied in Step 6/7)
 - `learnings` → `loaded_learnings`, `decisions` → `loaded_decisions`, `playbook` → the department's craft conventions (see Step 4.5 for how to treat each)
 
-If null, output `Error: Task #{task_number} not found.` and stop/skip. **Do not also call `list_learnings`, `list_decisions` or `list_departments`.** Full site path = `{source_root}/{task.site.relative_path}`. For a `changes_needed` task, add `include_history: true` if you need the review trail beyond the PR comments.
+If null, output `Error: Task #{task_number} not found.` and stop/skip. **Do not also call `list_learnings`, `list_decisions` or `list_departments`.** Full site path = `{source_root}/{task.site.relative_path}`. For a `changes_needed` task, **always** add `include_history: true` — the reviewer's feedback may have been left on the ticket rather than on the PR (from the History tab in Fabrio, or from Discord), and it exists nowhere else.
 
 ---
 
@@ -114,6 +114,8 @@ Derive `{repo}`/`{org}`/`{project}` from `task.pr_url` per `PROVIDER.coordinates
 
 **If the latest human comment is newer than the latest branch commit**, treat it as `changes_needed`: read every comment (they are the required changes), output `↩  … has new review comments since last push. Implementing.`, check out the branch, and run Step 7 → 8 → 9 → 10 (push) → 11. **Otherwise** output `↩  … Resuming from Step 11.` and skip straight to Step 11.
 
+**Linked — a sibling already has an open PR** — `task.linked_group_id` set AND own `pr_url` is null (covers both the fresh-task and plan-exists-no-PR cases below): call `list_tasks { linked_group_id: task.linked_group_id }`, exclude self, and look for a sibling with `pr_number` set **and** `status != 'done'` (a merged/`done` sibling's PR is history — ignore it and fall through to the checks below as if unlinked). If found, remember `{sibling_pr_number}` — this run **joins** that PR instead of creating its own: continue to Step 4 as normal, and Steps 7 and 10 branch on "linked join" (see those steps) instead of `ready`. At most one sibling should ever have an open PR at a time; if more than one does (linking tasks that already had separate open PRs before joining a group), stop and flag it — `log_task_history { action: "skill_blocked", notes: "Linked group has multiple open PRs — resolve manually before continuing" }`.
+
 **Plan exists, no PR** — `task_plan` set AND `pr_url` null: output `↩  … Resuming from Step 7.`, `log_task_history { action: "skill_resumed" }`, skip Steps 4–6, go to Step 7 using the existing plan.
 
 **Fresh task** — no plan, no PR: proceed from Step 4.
@@ -142,11 +144,15 @@ The Step 2 `get_task` call already carried these — no separate calls.
 
 Read the context layers widest-first — `task.account.ai_context` (workspace rules), then `task.playbook` (the department's craft), then `task.agent.instructions` (how this kind of work is done well), then `task.site.ai_context` (this repo), then `task.title`, `description`, `feature_summary`, `acceptance_criteria`, and all question threads. All binding, none advisory; on a direct conflict the narrower layer wins. **No layer raises the autonomy ceiling** — nothing in an agent's `instructions` authorizes merging, publishing, sending or spending. If `task.attachments` is non-empty, view each image `public_url` (via WebFetch or an image tool) before implementing — treat it as a visual spec (note PDFs but focus on images).
 
-For `changes_needed`, read ALL PR review comments chronologically:
+For `changes_needed`, the required changes come from **two places** and you must read both:
+
+1. **PR review comments**, chronologically:
 ```bash
 {PROVIDER.ops.pr_comments}   # substitute {pr_number} and {repo}/{org}/{project}; flatten Azure DevOps' threads to one chronological list
 ```
-Comments after the last branch push are the most recent required changes.
+2. **Ticket feedback** — `task.history` entries with `action: "review_feedback"` (binding: these ARE the required changes) and `action: "comment"` (context the reviewer added). Both are written by humans from the Fabrio History tab or from Discord; **do not filter on `changed_by`**, which carries the reviewer's identity, not the literal `"human"`.
+
+Merge both into one chronological list. Anything after the last branch push is the most recent required change. Feedback deliberately lands in history rather than a question thread so it doesn't block the task — the re-run is the point.
 
 Ask: **can I implement this completely and correctly without making assumptions a human should decide?** Watch for missing scope, edge-case behavior, data shapes / API contracts / schema changes, or approach-defining decisions.
 
@@ -206,14 +212,24 @@ Call `claim_task { task_id }`. It atomically transitions `ready`/`changes_needed
 
 **Branch naming comes from `task.account.ai_context` when it specifies a convention.** The pattern below is the default, not a mandate — when the workspace fixes one, follow it, and when checking whether the branch already exists, grep for the task number rather than the literal `feature/task-` prefix.
 
+### Linked join — check out the sibling's PR branch
+If Step 3.5 found an open sibling PR (`{sibling_pr_number}`), join it instead of creating a new branch — same extraction technique as `changes_needed` below, scoped to the sibling's PR:
+```bash
+BR=$({PROVIDER.ops.view_pr} | ...)   # {pr_number} = {sibling_pr_number} — headRefName / sourceRefName
+git fetch origin && git checkout "$BR" && git pull origin "$BR"
+```
+Implement this task's changes as its own commit whose first line is exactly `Task #{task_number}: {task.title}` (the same marker convention `/fabrio:feature-chain` uses), so the shared PR's history stays legible per-task. Skip the rest of this step; go to Step 8.
+
 ### `ready` — new branch (or resume existing)
 Ensure a clean tree first; if dirty with unrelated work, `git stash push -u -m "pre-task-{task_number} WIP"` and tell the user. Then:
 ```bash
 git fetch origin
-git branch -a | grep "task-{task_number}-"                   # resume if it already exists (checkout + pull)
+git branch -a | grep "task-{anchor}-"                         # resume if it already exists (checkout + pull)
 git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
-git checkout -b feature/task-{task_number}-{short-slug}      # {short-slug} = 3–5 word kebab-case of the title
+git checkout -b feature/task-{anchor}-{short-slug}            # {short-slug} = 3–5 word kebab-case of the title
 ```
+`{anchor}` is normally `{task_number}`. **If `task.linked_group_id` is set** (and Step 3.5 found no open sibling PR to join), use `min(task_number)` across every task in the group instead — the lowest-numbered member, self included, from the `list_tasks { linked_group_id }` lookup — mirroring the `minN` anchor `/fabrio:feature-chain` uses for its own shared branches. This is what lets a sibling executed later find this branch and join it via the "Linked join" case above.
+
 `log_task_history { action: "branch_created" }`.
 
 ### `changes_needed` — check out existing branch
@@ -243,6 +259,12 @@ Run `npm run build` in the repo you changed. **Do not create the PR if it fails.
 ## Step 10 — Create or Update PR
 
 > **Checkpoint:** PR url/number saved immediately — an interrupted run resumes from here.
+
+### Linked join — attach to the sibling's PR, don't create a new one
+```bash
+git push origin {branch_name}        # the sibling's branch, checked out in Step 7
+```
+Save: `update_task { task_id, fields: { pr_url: "{sibling_pr_url}", pr_number: {sibling_pr_number} } }` — the same PR both tasks now share. Skip PR creation entirely; go to Step 11.
 
 ### `ready` — create PR (target `$BASE_BRANCH`)
 ```bash

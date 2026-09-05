@@ -170,11 +170,12 @@ This skill didn't produce the work, so its retrospective is about the **review c
 
 2. **If ≥ 1 cycle**: gather the human feedback, then distill the recurring theme into ONE `review_feedback` learning phrased as a rule (e.g. "Reviewer consistently asks for loading states on async buttons for {site}", or "Marketing copy for {site} must avoid superlatives").
 
-   **Repo tasks** — read the PR comments:
+   **Every mode** — read the `history` entries with `action: "review_feedback"` and `action: "comment"`. These are written by the reviewer from the ticket's History tab or from Discord; **do not filter on `changed_by`**, which carries their identity rather than the literal `"human"`. Also read any human (`role: "human"`) messages in `task.questions[].messages`.
+
+   **Repo tasks additionally** — read the PR comments, since a reviewer may have left them there instead:
    ```bash
    {PROVIDER.ops.pr_comments}   # substitute {pr_number} and {repo}/{org}/{project}; flatten Azure DevOps' threads to one chronological list
    ```
-   **Non-repo tasks** — the feedback is in Fabrio, not GitHub: read the `history` entries with `action: "review_feedback"` (written by the reviewer from the Deliverable tab), plus any human (`role: "human"`) messages in `task.questions[].messages`.
 
    **Dedup first** — `list_learnings { department: task.department, site_id: task.site_id, include_portfolio: true, statuses: ["active"] }`. If the new learning restates an existing one, `reinforce_learning { learning_id }`. Otherwise `record_learning { site_id: task.site_id, department: task.department, source_task_id: task.id, category: "review_feedback", title: "{rule ≤200 chars}", content: "{directive ≤2000 chars}" }`.
 

@@ -288,6 +288,62 @@ Regardless of mode, the parent may add one `process` learning when the chain its
 
 ---
 
+## Step 6.5 — Report What Isn't This Ticket
+
+**Runs after every task (single + batch).** By now you have almost certainly noticed something
+outside the work you were given. There are four destinations and they are **not**
+interchangeable:
+
+| what you found | where it goes |
+|---|---|
+| you lacked knowledge you should have had, and would repeat the mistake | `record_learning` / `reinforce_learning` — Step 6 above |
+| **work that isn't this ticket** — a bug elsewhere, a follow-up, something on another site | `report_feedback { suggested_action: "ticket" }` with a complete `proposed_task` |
+| **the plan's shape is wrong** — a missing initiative, one pointed at the wrong site, an unplanned dependency | `report_feedback { suggested_action: "plan_revision" }` |
+| **this ticket is under-specified and you cannot proceed** | the blocking `create_task_question` / `create_decision` path in Step 3e / Step 4 — unchanged |
+
+`report_feedback` is **non-blocking** — that is the whole reason it exists. A question thread
+sets `is_blocked` and the runner then skips the task, so raising unrelated work as a question
+would stall the very ticket you just finished. A discrete piece of work is a **ticket** even
+when a plan exists; `plan_revision` is only for the plan's own shape. One finding can be more
+than one row — a bug you had to work around is both a `pitfall` learning and a suggested ticket.
+
+**A suggested ticket must be file-ready.** A human clicks Approve and your draft becomes the
+ticket **verbatim** — nobody is coming back to ask you for the rest, and a thin draft is
+rejected on submission rather than stored.
+
+```
+report_feedback {
+  category: "bug" | "missing_work" | "scope_correction" | "dependency" | "risk" | "process",
+  title: "{one line}",
+  content: "{what you saw and why it matters}",
+  suggested_action: "ticket",
+  proposed_task: {
+    title: "{…}", description: "{the spec you would want to receive}",
+    acceptance_criteria: "{how a reviewer knows it is done}",
+    site_id: "{the site the WORK belongs to — often NOT the site you were working in}",
+    department: "{…}", execution_mode: "repo" | "artifact" | "external",
+    difficulty: "light" | "standard" | "heavy"
+  },
+  source_task_id: T.id
+}
+```
+
+For a plan gap, drop `proposed_task` and pass `suggested_action: "plan_revision"` with
+`plan_item_id: T.plan_item_id` (the plan is resolved from it). A task with no plan has
+no plan-revision exit — report it as a ticket.
+
+**Reporting is the whole of your authority here.** Never create a task, plan item or revision
+from your own finding, never start working on one, and never treat a reported item as approved —
+a human approves the suggested ticket or escalates the plan gap in Fabrio. Cap at 3 per run;
+`report_feedback` is idempotent on title, so re-reporting a standing finding reinforces it
+instead of duplicating it. **Zero is a perfectly good number.**
+
+No extra history call: `report_feedback` logs `feedback_reported` on the source task itself.
+
+**Routed mode:** each `--step` child already reported its own task's findings. The parent adds only what the CHAIN taught it — e.g. a dependency that should have been its own ticket ahead of the chain.
+
+---
+
 ## Step 7 — Output Summary
 
 Per chain:

@@ -119,8 +119,10 @@ These bounds are the difference between useful run history and a write storm:
 
 Every task this run files comes from a `create_task` node — inside the `foreach` when the job files one per item, at the root when it files one per run. For each, call `create_job_task { plan_item_id: id, title, description, ... }`:
 - `title` — concise, per the step's title format.
-- `description` — **everything the executor needs.** Carry the evidence and the decisions this run made: IDs, counts, affected areas, links, repro steps, the chosen topic and why, the brief. The task **cannot read the job's steps** — whatever your planning steps worked out is lost unless you write it here, and the executor will re-derive it (differently) if you don't.
-- Optionally `acceptance_criteria`, `difficulty`, and `site_id`.
+- `description` — **everything the executor needs**, in **≤ 5000 characters.** Carry the evidence and the decisions this run made: IDs, counts, affected areas, links, repro steps, the chosen topic and why, the brief. The task **cannot read the job's steps** — whatever your planning steps worked out is lost unless you write it here, and the executor will re-derive it (differently) if you don't. If 5000 chars isn't enough, you're carrying raw data that belongs in an attachment or a link, not prose.
+- `feature_summary` — optional; a **1–2 sentence** summary, **≤ 500 characters** (it becomes the PR summary). Not a second copy of the description.
+- Optionally `acceptance_criteria` (≤ 5000 chars), `difficulty`, and `site_id`.
+- Write each field within its budget the first time. If a call is rejected for length, trim **only** the field named in the error and retry — do not regenerate the task.
 - `site_id` — pass it only when the task is specific to one site. Omit it and the server files one task per site the plan targets, which is what a multi-site plan wants.
 
 Each call creates `ready` task(s) linked back to this job. Dedup against `open_tasks` first — matching on title + gist — and skip anything already covered. That is what makes repeated runs safe.
@@ -160,6 +162,27 @@ Call **exactly once** at the end, even if zero tasks were filed and even if the 
 This closes the run row the UI shows **and** sets `next_run_at`:
 - **completed** → advances by the job's normal cadence.
 - **failed** → schedules a **retry** instead of consuming the period: 1h, 2h, 4h, 8h … doubling per consecutive failure, capped at the job's own cadence. A failed run therefore never costs a full cycle, and a job broken for a real reason settles back to roughly its normal frequency rather than retrying forever. The result carries `consecutive_failures` — quote the retry time in your summary so the user knows when it comes back. **In plan mode never call `queue_plan_item_task`** — a job with a real procedure files its tasks from its `create_task` steps. That tool is for one-off initiatives and for legacy mode (Step 2.95), which is the only place `advance_cadence: false` belongs.
+
+---
+
+## Step 5.5 — Report a gap in the job itself
+
+**A job plans, it never does** — so when a run reveals that the *procedure* is wrong, you may not
+fix it yourself. Report it and move on:
+
+- **The job's steps are the problem** — a source it should read and doesn't, a filter that keeps
+  discarding real candidates, a `create_task` step that files the wrong shape of ticket. →
+  `report_feedback { category: "scope_correction" | "missing_work", suggested_action: "plan_revision", plan_item_id: item.id, title, content }`.
+  A human escalates it and `/fabrio:revise-plan` reshapes the initiative.
+- **You noticed concrete work that is not this job's output** — something broken in a repo you
+  read from. → `report_feedback { suggested_action: "ticket", ... }` with a complete
+  `proposed_task` (see `/fabrio:execute-task` Step 9.5 for the full shape). Approving it files the
+  ticket verbatim, so write a real spec.
+
+**Never** call `replace_job_steps` to "fix" the procedure mid-run, never file a task outside the
+tree's `create_task` steps to route around it, and never treat a reported item as approved. Cap at
+2 per run; zero is the normal case. `report_feedback` is idempotent on title, so a standing
+complaint about a job reinforces rather than piling up.
 
 ---
 

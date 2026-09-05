@@ -42,6 +42,8 @@ Say the target list back to the user before you generate, e.g. `Plan #12 "Improv
 
 ---
 
+**Also read any feedback already waiting on this plan:** `list_feedback { plan_id: plan.id, suggested_action: "plan_revision" }` (defaults to `escalated` — human-approved). A plan can be re-generated after findings have accumulated, and an escalated entry is binding here for the same reason it is in `$fabrio:revise-plan`. Pass the ids you acted on as `resolves_feedback_ids` on `replace_plan_items`. Entries still at `reported` are not approved — ignore them.
+
 ## Step 2 — Load Workspace Context, Departments, Learnings & Sibling Sites
 
 Call `get_account_context` first — the workspace's own `ai_context`: portfolio-wide rules (branch naming, company-wide code and content policy) that constrain every initiative you write, whatever site or department it lands on. Treat it as binding. It is the widest context layer; a department's `playbook` and a site's `ai_context` are narrower and win a direct conflict.

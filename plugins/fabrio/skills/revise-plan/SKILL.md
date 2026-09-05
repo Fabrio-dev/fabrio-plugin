@@ -49,6 +49,29 @@ Use `plan.latest_accepted_revision.created_at` (from Step 1) as the cutoff. Fetc
 
 ---
 
+## Step 2.5 — Read the escalated feedback (BINDING)
+
+`list_feedback { plan_id: plan.id, suggested_action: "plan_revision" }` — it defaults to status
+`escalated`, which is exactly the set a human has **approved** as input to this revision.
+
+Each entry is **binding**. Address every one, and say in `change_summary` how: a new initiative, an
+amendment to an existing one, or an explicit decline **with the reason**. Declining is allowed;
+silently skipping is not — the human escalated it precisely so it could not be forgotten.
+
+Pass every id you acted on as `resolves_feedback_ids` on `propose_plan_revision` (Step 5). Those
+rows resolve when the human **accepts** the revision; anything you leave uncited stays pending and
+is offered again on the next run, which is the point — a revision must not be able to bury a
+finding it never addressed.
+
+Two things that are **not** yours here:
+- Entries still at status `reported` — a human has not approved them, so they are not input.
+  Don't ask for them, don't act on them.
+- Suggested **tickets**. Those are approved into real tasks in the browser, and by the time you
+  see the workspace they either exist as tickets or were dismissed. Do not re-plan them as
+  initiatives; you would duplicate work that is already filed.
+
+---
+
 ## Step 3 — Load Workspace Context, Departments, Learnings & Sibling Sites
 
 `get_account_context` — the workspace's own `ai_context`: portfolio-wide rules that constrain any revised initiative, whatever site or department it lands on. Binding; a revision must not propose items that violate it. It is the widest context layer — a department's `playbook` and a site's `ai_context` are narrower and win a direct conflict.
@@ -92,6 +115,7 @@ Only propose a **new** recurring job when the objective genuinely needs repeatin
 Call `propose_plan_revision`:
 ```
 propose_plan_revision {
+  resolves_feedback_ids: ["{ids from Step 2.5 you actually addressed}"],
   plan_id: "{plan.id}",
   goals: "…updated goals…",
   target_audience: "…",
@@ -99,7 +123,7 @@ propose_plan_revision {
     { department: "development", title: "…", description: "…", category: "infra", frequency: "one_time", priority: "high",   difficulty: "standard", sort_order: 0 },
     { department: "content",     title: "…", description: "…", category: "blog",  frequency: "monthly",  priority: "medium", difficulty: "light",    sort_order: 1 }
   ],
-  change_summary: "Retired 2 shipped initiatives, added 3 (design + dev) informed by X; reprioritized Y."
+  change_summary: "Retired 2 shipped initiatives, added 3 (design + dev) informed by X; reprioritized Y. Feedback #{n}: added initiative Z; feedback #{m}: declined — already covered by initiative W."
 }
 ```
 The tool assigns the next revision number and status `proposed`. The live plan is untouched.

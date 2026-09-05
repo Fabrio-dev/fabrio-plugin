@@ -75,7 +75,7 @@ Skip the rest where `eligible === false` — the `skip_reason` explains why: pla
 
 Run when `weekly_due` from Step 0 is true (or `--weekly` was passed). Otherwise skip.
 
-1. **Propose revisions** — for each **active** plan with tasks reaching `done` since its last accepted revision, invoke **`/fabrio:revise-plan {plan_number}`** (writes a *proposed* revision — never changes the live plan). Use `list_tasks { statuses: ["done"], updated_since }` and `get_plan` to find candidates. Increment `revisions_proposed` per plan.
+1. **Propose revisions** — for each **active** plan with tasks reaching `done` since its last accepted revision, **or with escalated feedback waiting** (`list_feedback { plan_id, suggested_action: "plan_revision" }` returns anything), invoke **`/fabrio:revise-plan {plan_number}`** (writes a *proposed* revision — never changes the live plan). Use `list_tasks { statuses: ["done"], updated_since }` and `get_plan` to find candidates. Escalated feedback is a human saying *this must be addressed*, so a plan carrying some is worth a revision even in a quiet week with nothing shipped. Increment `revisions_proposed` per plan.
 2. **Consolidate learnings** — invoke **`/fabrio:consolidate-learnings`**; set `learnings_consolidated=true`.
 
 ---

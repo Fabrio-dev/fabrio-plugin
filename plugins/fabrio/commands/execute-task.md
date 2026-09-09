@@ -268,6 +268,8 @@ an empty list would spawn a child that can do nothing.
 
 This dispatch is **unconditionally headless** — nobody is watching that child regardless of whether this `execute-task` run itself was invoked with `--headless`, so it always carries the flag.
 
+The delegate consults any linked `design_tool` resource itself (its Step 5.6) — no need to pull the prototype here first.
+
 > **Run it in the FOREGROUND and block until it exits. Never background this command.**
 > Implementing a feature takes minutes, which makes backgrounding it look like the considerate
 > choice — it is not. In headless `-p` mode this process ends as soon as you stop emitting

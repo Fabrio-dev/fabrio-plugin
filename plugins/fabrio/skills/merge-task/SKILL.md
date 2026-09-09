@@ -156,6 +156,8 @@ Find the siblings: `list_tasks { pr_number: task.pr_number }`. This returns ever
 `update_task { task_id: {sibling.id}, fields: { status: "done", merged_at: "{current UTC ISO timestamp}" } }` (the status change is auto-logged). The merged PR is the source of truth, so a sibling still in `under_review` does **not** need to be individually `approved` first. Add the merge note per task:
 `log_task_history { task_id: {sibling.id}, action: "merged", notes: "PR #{task.pr_number} merged into {BASE_BRANCH} — deployment triggered automatically" }`
 
+**Record the merge on each task's PR row too:** `update_task_pr_status { task_id: {sibling.id}, pr_number: task.pr_number, status: "merged" }`, for **every** returned task including the invoked one — each shares `pr_number` but has its own PR row (a task can carry more than one PR over its life; this marks the specific one that just merged).
+
 Track `{merged_count}` = how many tasks you marked done (1 for a normal task, N for a chain).
 
 ### Non-repo tasks — close just this one

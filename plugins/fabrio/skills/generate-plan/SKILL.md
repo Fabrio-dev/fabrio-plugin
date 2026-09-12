@@ -105,7 +105,7 @@ Each initiative:
 - `title` (≤200 chars)
 - `description` (one or two sentences of actionable detail)
 - `category` (free-form lowercase slug — see suggestions)
-- `frequency` — `one_time` | `weekly` | `biweekly` | `monthly` | `quarterly`
+- `frequency` — `one_time` | `daily` | `weekly` | `biweekly` | `monthly` | `quarterly` (`daily` is for jobs that must run every day, e.g. a market-data pull — the due-jobs heartbeat must run at least daily for it to fire)
 - `priority` — `high` | `medium` | `low`
 - `difficulty` — `light` | `standard` | `heavy` (effort tier for model routing):
   - `light` — single-file / copy / config / content; mechanical; no schema changes. Most `marketing`/`content`.

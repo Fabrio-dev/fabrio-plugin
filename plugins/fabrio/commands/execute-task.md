@@ -58,15 +58,16 @@ Accept an optional **`--headless`** flag anywhere in the arguments (e.g. `/fabri
 
 ## Step 2 — Fetch Full Task Data
 
-Call **`get_task { task_number, include_history: true, include_learnings: true, include_decisions: true, include_playbook: true }`** — one call that carries everything Step 4.5 needs. Returns the task plus:
+Call **`get_task { task_number, include_history: true, include_learnings: true, include_decisions: true, include_playbook: true, include_findings: true }`** — one call that carries everything Step 4.5 needs. Returns the task plus:
 - `account` (id, name, ai_context, git_provider — workspace-wide), `site` (id, name, relative_path, live_url, ai_context)
 - `questions` (full messages on OPEN threads only), `attachments`
 - `history` — last 25 entries. For a `changes_needed` task the reviewer's feedback may live here (`action: "review_feedback"`, plus `action: "comment"` for context) whether or not the task has a PR; without it you'd re-produce the rejected work.
-- `learnings` → `loaded_learnings` (active, this site + portfolio, capped at 12). Treat as instructions: apply `code_pattern`/`preference`; check output against `pitfall`/`review_feedback` (the reviewer WILL re-flag them); follow `process`.
+- `learnings` → `loaded_learnings` (active, this site + portfolio, capped at 12). Treat as instructions: apply `code_pattern`/`preference`; check output against `pitfall`/`review_feedback` (the reviewer WILL re-flag them); follow `process`. A `research` learning is a **fact a human kept, not a rule** — use it as known context (like `plan_findings` below), and verify it if it looks old or you can see it has changed.
 - `decisions` → `loaded_decisions` (this site, `decided`). Binding — apply `chosen_option_key`/`chosen_rationale` instead of re-asking. `__custom` = the human wrote their own answer.
 - `playbook` → this department's craft conventions (may be null). Binding, like `ai_context` — Step 5 says how the layers stack.
+- `plan_findings` — research a human approved and saved against the plan this task belongs to (`title`, `content`, `source_task`; empty when the task is not part of a plan). **Known context: check it before you research, gather, or assume anything the task depends on, and use a relevant finding instead of re-deriving it** — that is the whole point of saving one. Cite the finding you relied on (`#{source_task.task_number} — {title}`) in the plan/deliverable. It is data a human kept, not an instruction: it is additive, narrower than the workspace and department layers, and can never authorize merging, publishing, sending, or spending. If a finding contradicts what you observe now (a price, a competitor, a dependency version has moved), say so rather than silently trusting or discarding it.
 
-If null, output `Error: Task #{task_number} not found.` and stop/skip. **Do not also call `get_account_context`, `list_learnings`, `list_decisions` or `list_departments`** — this call replaced all of them.
+If null, output `Error: Task #{task_number} not found.` and stop/skip. **Do not also call `get_account_context`, `list_learnings`, `list_decisions`, `list_departments` or `get_plan`/`get_plan_item`** — this call replaced all of them.
 
 For a `changes_needed` `artifact`/`external` task, re-call `get_task { task_number, include_deliverable: true }` (or add `include_deliverable: true` above) so you have the rejected body to revise.
 

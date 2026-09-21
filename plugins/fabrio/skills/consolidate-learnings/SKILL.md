@@ -39,9 +39,13 @@ For each duplicate cluster, pick the **clearest, most actionable** phrasing as t
 `merge_learnings { survivor_id, duplicate_ids: [ … ] }`
 The server sums the cluster's `occurrence_count` onto the survivor and archives the duplicates. Be conservative: if two learnings are related but distinct rules, leave both.
 
+**`research` learnings are facts, not rules.** A human filed one from an approved research task ("escalate site-wide") — a result about the world (a competitor, a price, a benchmark), not a convention to follow. Merge true duplicates as usual, but keep two that state different facts, and prefer the **more recent** phrasing when they conflict, since a fact goes stale in a way a convention doesn't.
+
 ---
 
 ## Step 3 — Promote Proven Learnings
+
+**Never promote a `research` learning.** Promotion folds a learning into the site's binding `## Learned Conventions`; a research result is data that can be wrong or out of date, and promoting it would turn it into an instruction every future run must obey. It stays `active` — where executors already read it as known context — and ages out under the normal 90-day staleness rule.
 
 ### Site-scoped (`site_id` set, `occurrence_count >= 3`)
 
